@@ -44,14 +44,31 @@
 - ③ 学校 → 用務地 → 自宅（帰りの通勤経路と重複する区間を除算）
 - ④ 自宅 → 用務地 → 自宅（行き帰りの通勤経路と重複する区間を除算）
 
-## 公開（GitHub Pages）
-このリポジトリの **Settings → Pages** で、Branch を `main` ／ フォルダを `/ (root)` にすると、
-`https://<ユーザー名>.github.io/<リポジトリ名>/` で公開されます（`index.html` がそのまま表示されます）。
+## 公開方法
+
+### A. GASでアプリごと配信（学校などGitHubが開けない環境向け・推奨）
+すべて Google ドメイン（`script.google.com`）で完結するため、GitHub にアクセスできない環境でも使えます。
+1. GAS プロジェクトに `コード.gs` を貼り付け
+2. ＋（ファイル追加）→「HTML」で **`page`** という名前のファイルを作り、`index.html`（=`page.html`）の中身を全部貼り付け
+3. デプロイ（ウェブアプリ／実行=自分／アクセス=全員）
+4. 発行された `.../exec` を開くと **アプリ画面が表示**される
+5. Googleサイトに、その exec URL を iframe で埋め込む：
+   ```html
+   <iframe src="https://script.google.com/macros/s/XXXX/exec" width="100%" height="900" frameborder="0"></iframe>
+   ```
+   （Googleサイト → 挿入 → 埋め込む → 「コードを埋め込む」に貼り付け）
+
+> 印刷は埋め込み枠内だと不安定なので、印刷時は exec URL を直接開いて使ってください。
+
+### B. GitHub Pages（リポジトリがPublicの場合）
+**Settings → Pages** で Branch を `main` ／ フォルダを `/ (root)` にすると、
+`https://<ユーザー名>.github.io/<リポジトリ名>/` で公開されます。
 
 ## フォルダ構成
-- `index.html` … アプリ本体（GitHub Pages用のエントリ）
+- `index.html` … アプリ本体（GitHub Pages用／ローカルで開く用のエントリ）
+- `page.html` … 同じ本体（GASの `page` HTMLファイルに貼り付ける用）
 - `出張申請おたすけ君.html` … 同じ本体（ローカルで開く用）
-- `コード.gs` … 経路検索プロキシAPI（Google Apps Script にデプロイして使う）
+- `コード.gs` … アプリ配信＋経路/住所検索API（Google Apps Script にデプロイして使う）
 
 ## 注意
 - 保存（自宅・勤務地・よく使う用務地）は、使っているブラウザ内に保存されます（端末間の自動同期はありません）。

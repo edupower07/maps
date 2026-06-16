@@ -1,19 +1,31 @@
 /**
- * 出張距離測定・申請ガイド ─ 経路検索プロキシAPI（Google Apps Script）
+ * 出張距離測定・申請ガイド ─ アプリ配信＋経路検索API（Google Apps Script）
  * =====================================================================
  * Google Cloud の APIキー・課金設定は一切不要です。
- * GAS に内蔵されている Maps サービス（Maps.newDirectionFinder）を使い、
- * Google マップの高精度なルートデータをフロントエンドに JSON で返します。
+ * GAS に内蔵されている Maps サービス（Maps.newDirectionFinder / newGeocoder）で
+ * Google の高精度なルート・住所データを使います。
  *
- * 【デプロイ手順】
+ * このGASは2役を兼ねます：
+ *   (1) パラメータなしでアクセス → アプリ本体(HTML)を配信（page.html）
+ *   (2) origin/dest や q を付けてアクセス → ルート/住所検索の結果をJSONで返す
+ * これにより GitHub を使わず、すべて Google ドメイン（script.google.com）で完結し、
+ * 学校など GitHub が開けない環境でも Google サイトに埋め込んで使えます。
+ *
+ * 【セットアップ手順】
  *   1. https://script.google.com で新規プロジェクトを作成
- *   2. このコードを「コード.gs」に貼り付けて保存
- *   3. 右上「デプロイ」→「新しいデプロイ」
+ *   2. このコードを「コード.gs」に貼り付け
+ *   3. ＋（ファイル追加）→「HTML」で "page" という名前のファイルを作り、
+ *      index.html（= page.html）の中身を全部貼り付ける
+ *   4. 右上「デプロイ」→「新しいデプロイ」
  *      - 種類: ウェブアプリ
  *      - 次のユーザーとして実行: 自分
  *      - アクセスできるユーザー: 全員（匿名を含む）
- *   4. 発行された「ウェブアプリ URL（.../exec）」をコピー
- *   5. index.html の GAS_API_URL にそのURLを貼り付け
+ *   5. 発行された「ウェブアプリ URL（.../exec）」を開くと、アプリ画面が表示される
+ *   6. （任意）Googleサイトに、その exec URL を iframe で埋め込む
+ *
+ * 【page.html 側の設定】
+ *   page.html 内の GAS_API_URL は、この同じ exec URL を指定しておく
+ *   （アプリが自分自身のURLを叩いてルート/住所検索する）。
  *
  * 【リクエスト（GET クエリパラメータ）】
  *   origin        必須  "緯度,経度"            例: 34.781,135.452
@@ -34,70 +46,70 @@
  */
 
 function doGet(e) {
-  try {
-    var p = (e && e.parameter) || {};
+  var p = (e && e.parameter) || {};
 
-    // 住所・施設の検索（ジオコーディング）。mode=geocode または q= が来たら処理。
-    if (p.mode === 'geocode' || p.q) {
-      return json_(geocode_(p.q));
-    }
-
-    // パラメータなしで（ブラウザで直接URLを開くなどして）アクセスされた場合は、
-    // 「APIは正常に稼働中」であることが分かる案内を返す（これはエラーではない）。
-    if (!p.origin && !p.dest) {
-      return json_({
-        ok: true,
-        status: 'ready',
-        message: 'APIは正常に稼働しています。ルート検索は origin/dest、住所検索は q を指定してください。',
-        example_route: '?origin=33.8835,130.8752&dest=33.8870,130.8800',
-        example_geocode: '?q=北九州市立教育センター'
-      });
-    }
-
-    var origin = parseLatLng_(p.origin);
-    var dest   = parseLatLng_(p.dest);
-    if (!origin || !dest) {
-      throw new Error('origin / dest が不正です（"緯度,経度" 形式で指定してください）');
-    }
-
-    var avoidHighways = p.avoidHighways === '1';
-    var avoidTolls    = p.avoidTolls === '1';
-    var alternatives  = p.alternatives === '1';
-    var detectToll    = p.detectToll === '1' && !avoidTolls;
-    var waypoints     = parseWaypoints_(p.waypoints);
-
-    var routes = findRoutes_(origin, dest, {
-      avoidHighways: avoidHighways,
-      avoidTolls: avoidTolls,
-      alternatives: alternatives,
-      waypoints: waypoints
-    });
-
-    // 有料道路の有無を推定（有料を許可しているモードのときだけ）。
-    // 「有料回避ルート」の距離と比べ、現ルートが明確に短ければ有料利用とみなす。
-    if (detectToll && routes.length) {
-      var noTollDist = null;
-      try {
-        var noToll = findRoutes_(origin, dest, {
-          avoidHighways: avoidHighways,
-          avoidTolls: true,
-          alternatives: false,
-          waypoints: waypoints
-        });
-        if (noToll.length) noTollDist = noToll[0].distance;
-      } catch (err) { /* 有料回避ルートが取れない場合は判定をスキップ */ }
-
-      if (noTollDist != null) {
-        routes.forEach(function (r) {
-          r.hasToll = r.distance < noTollDist * 0.97; // 3%以上短ければ有料利用と推定
-        });
+  // ── APIリクエスト（ルート検索 / 住所・施設検索）はJSONを返す ──
+  if (p.origin || p.dest || p.q || p.mode) {
+    try {
+      // 住所・施設の検索（ジオコーディング）
+      if (p.mode === 'geocode' || p.q) {
+        return json_(geocode_(p.q));
       }
-    }
 
-    return json_({ ok: true, routes: routes });
-  } catch (err) {
-    return json_({ ok: false, error: String((err && err.message) || err) });
+      var origin = parseLatLng_(p.origin);
+      var dest   = parseLatLng_(p.dest);
+      if (!origin || !dest) {
+        throw new Error('origin / dest が不正です（"緯度,経度" 形式で指定してください）');
+      }
+
+      var avoidHighways = p.avoidHighways === '1';
+      var avoidTolls    = p.avoidTolls === '1';
+      var alternatives  = p.alternatives === '1';
+      var detectToll    = p.detectToll === '1' && !avoidTolls;
+      var waypoints     = parseWaypoints_(p.waypoints);
+
+      var routes = findRoutes_(origin, dest, {
+        avoidHighways: avoidHighways,
+        avoidTolls: avoidTolls,
+        alternatives: alternatives,
+        waypoints: waypoints
+      });
+
+      // 有料道路の有無を推定（有料を許可しているモードのときだけ）。
+      // 「有料回避ルート」の距離と比べ、現ルートが明確に短ければ有料利用とみなす。
+      if (detectToll && routes.length) {
+        var noTollDist = null;
+        try {
+          var noToll = findRoutes_(origin, dest, {
+            avoidHighways: avoidHighways,
+            avoidTolls: true,
+            alternatives: false,
+            waypoints: waypoints
+          });
+          if (noToll.length) noTollDist = noToll[0].distance;
+        } catch (err) { /* 有料回避ルートが取れない場合は判定をスキップ */ }
+
+        if (noTollDist != null) {
+          routes.forEach(function (r) {
+            r.hasToll = r.distance < noTollDist * 0.97; // 3%以上短ければ有料利用と推定
+          });
+        }
+      }
+
+      return json_({ ok: true, routes: routes });
+    } catch (err) {
+      return json_({ ok: false, error: String((err && err.message) || err) });
+    }
   }
+
+  // ── パラメータなしのときは、アプリ本体（HTML）を配信する ──
+  // これにより GitHub を使わず、すべて Google ドメイン（script.google.com）で完結する。
+  // Googleサイトに埋め込めるよう、iframe表示を許可（ALLOWALL）する。
+  // ※ GASプロジェクトに「page.html」という名前のHTMLファイル（index.html の中身）が必要です。
+  return HtmlService.createHtmlOutputFromFile('page')
+    .setTitle('出張距離測定・申請ガイド')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
 }
 
 /**
