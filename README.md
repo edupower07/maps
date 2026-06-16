@@ -3,7 +3,8 @@
 自家用車での出張距離を測定し、通勤経路と重複する区間を除算して、出張申請に必要な地図を印刷するためのWebアプリです。**Google CloudのAPIキー・課金設定は不要**です。
 
 - 地図描画：OpenStreetMap（Leaflet）
-- 住所・施設検索：国土地理院 ＋ OpenStreetMap（Nominatim）
+- 住所・施設検索：**Googleジオコーダ（GAS経由）** ＋ 国土地理院 ＋ OpenStreetMap（Nominatim）を統合し、精度の高い順に表示
+  - ※ GASの無料Mapsサービスはジオコーダ（住所中心）まで。Googleマップアプリのような施設名検索（Places）はAPIキー＋課金が必要なため使えません。施設名は当たることもありますが、住所での検索がもっとも確実です。
 - ルート検索：**Googleマップ（Google Apps Script の Maps サービス経由）**
   - フロント（HTML）から GAS のウェブアプリAPIを叩くハイブリッド構成。GASの内蔵Mapsサービスを使うため、Google CloudのAPIキーは不要です。
   - GASに接続できない場合は、直線距離×1.3の推定値に自動フォールバックします。

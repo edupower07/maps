@@ -37,14 +37,20 @@ function doGet(e) {
   try {
     var p = (e && e.parameter) || {};
 
+    // 住所・施設の検索（ジオコーディング）。mode=geocode または q= が来たら処理。
+    if (p.mode === 'geocode' || p.q) {
+      return json_(geocode_(p.q));
+    }
+
     // パラメータなしで（ブラウザで直接URLを開くなどして）アクセスされた場合は、
     // 「APIは正常に稼働中」であることが分かる案内を返す（これはエラーではない）。
     if (!p.origin && !p.dest) {
       return json_({
         ok: true,
         status: 'ready',
-        message: 'ルート検索APIは正常に稼働しています。origin と dest を指定してください。',
-        example: '?origin=33.8835,130.8752&dest=33.8870,130.8800'
+        message: 'APIは正常に稼働しています。ルート検索は origin/dest、住所検索は q を指定してください。',
+        example_route: '?origin=33.8835,130.8752&dest=33.8870,130.8800',
+        example_geocode: '?q=北九州市立教育センター'
       });
     }
 
@@ -127,6 +133,47 @@ function findRoutes_(origin, dest, opt) {
       hasToll: false
     };
   });
+}
+
+/**
+ * 住所・施設名を Google ジオコーダ（GAS内蔵・APIキー不要）で検索する。
+ * 返り値: { ok:true, results:[ { name, addr, lat, lng, location_type, types, approx } ] }
+ *   approx … 市区町村や都道府県の中心など「ざっくりした位置」かどうか
+ * 注意: GASのMapsサービスはジオコーダ（住所中心）のみで、Places（施設名検索）は
+ *       使えません。施設名は当たることもありますが、住所のほうが確実です。
+ */
+function geocode_(q) {
+  q = (q || '').trim();
+  if (!q) return { ok: false, error: 'q（検索語）を指定してください' };
+
+  var geocoder = Maps.newGeocoder().setLanguage('ja').setRegion('jp');
+  var res = geocoder.geocode(q);
+  if (!res || (res.status !== 'OK' && res.status !== 'ZERO_RESULTS')) {
+    return { ok: false, error: 'ジオコーディング失敗（status=' + (res && res.status) + '）' };
+  }
+
+  var results = (res.results || []).map(function (r) {
+    var loc = r.geometry && r.geometry.location;
+    var types = r.types || [];
+    // 都道府県・市区町村レベルの「中心」しか出ていない＝施設・番地までは特定できていない
+    var approx = (r.geometry && r.geometry.location_type === 'APPROXIMATE') &&
+      types.some(function (t) {
+        return t === 'locality' || t === 'political' || t === 'sublocality' ||
+               t === 'administrative_area_level_1' || t === 'administrative_area_level_2';
+      });
+    return {
+      name: r.formatted_address || '',
+      addr: r.formatted_address || '',
+      lat: loc ? loc.lat : null,
+      lng: loc ? loc.lng : null,
+      location_type: (r.geometry && r.geometry.location_type) || '',
+      types: types,
+      partial: !!r.partial_match,
+      approx: approx
+    };
+  }).filter(function (r) { return r.lat != null && r.lng != null; });
+
+  return { ok: true, results: results };
 }
 
 /** "緯度,経度" → {lat, lng}（不正なら null） */

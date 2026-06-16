@@ -882,6 +882,17 @@ function formatAddress(item) {
   return item.display_name ? item.display_name.split(',').slice(0, 4).join(' ') : '';
 }
 
+// Googleジオコーダ（GAS経由・APIキー不要）。住所精度が高い。施設名も今より当たりやすい。
+async function gasGeocode(query) {
+  if (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0) return [];
+  const url = GAS_API_URL + '?mode=geocode&q=' + encodeURIComponent(query);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Google(GAS) HTTP ${res.status}`);
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || 'Googleジオコーディング失敗');
+  return (data.results || []).map(normGoogle);
+}
+
 // 国土地理院ジオコーダ（日本の住所・施設に強い／APIキー不要）
 async function gsiSearch(query) {
   const url = 'https://msearch.gsi.go.jp/address-search/AddressSearch?q=' + encodeURIComponent(query);
@@ -893,7 +904,15 @@ async function gsiSearch(query) {
   return Array.isArray(arr) ? arr : [];
 }
 
-// 検索結果を共通形式に正規化：{ lat, lng, name, addr, source }
+// 検索結果を共通形式に正規化：{ lat, lng, name, addr, source, approx }
+function normGoogle(r) {
+  return {
+    lat: +r.lat, lng: +r.lng,
+    name: r.name, addr: r.addr,
+    source: 'Google',
+    approx: !!r.approx   // 市区町村・都道府県の中心など「ざっくり位置」
+  };
+}
 function normGsi(item) {
   const c = item.geometry && item.geometry.coordinates;
   if (!c) return null;
@@ -961,15 +980,21 @@ function buildSearchVariants(query) {
   return variants;
 }
 
-// GSIとNominatimを並行検索し、結果を統合
+// Google(GAS)・国土地理院・Nominatim を並行検索し、精度順に統合
 async function combinedSearch(query) {
   const tasks = [
+    gasGeocode(query).catch(e => { console.warn('[Google失敗]', e.message); return []; }),
     gsiSearch(query).then(a => a.map(normGsi)).catch(e => { console.warn('[GSI失敗]', e.message); return []; }),
     nominatimSearch(query, 8).then(a => a.map(normNom)).catch(e => { console.warn('[Nominatim失敗]', e.message); return []; })
   ];
-  const [gsi, nom] = await Promise.all(tasks);
-  console.log('[GSI件数]', gsi.length, '[OSM件数]', nom.length);
-  return dedupeCandidates([...gsi, ...nom]); // 地理院を優先
+  const [google, gsi, nom] = await Promise.all(tasks);
+  console.log('[Google件数]', google.length, '[GSI件数]', gsi.length, '[OSM件数]', nom.length);
+
+  // 精度の高い順に並べる：
+  //   Googleのピンポイント結果 > 地理院 > OSM > Googleの「ざっくり位置（市の中心など）」
+  const googlePrecise = google.filter(c => !c.approx);
+  const googleApprox  = google.filter(c => c.approx);
+  return dedupeCandidates([...googlePrecise, ...gsi, ...nom, ...googleApprox]);
 }
 
 // 複数の表記ゆれ候補を順に試し、最初に見つかった結果を返す
@@ -1005,7 +1030,8 @@ async function searchAddress(type) {
       return;
     }
 
-    if (cands.length === 1) {
+    // ピンポイント結果が1件だけならそのまま採用（ざっくり位置のときは確認させる）
+    if (cands.length === 1 && !cands[0].approx) {
       selectCandidate(type, cands[0]);
       return;
     }
@@ -1013,11 +1039,21 @@ async function searchAddress(type) {
     window._searchResults = window._searchResults || {};
     window._searchResults[type] = cands;
 
-    resultsEl.innerHTML = '<div style="padding:8px 12px;font-size:11px;color:#666;background:#f5f5f5;">候補を選択してください：</div>' +
+    const allApprox = cands.every(c => c.approx);
+    const sourceColor = s => s === '地理院' ? '#2e7d32' : (s === 'Google' ? '#1a73e8' : '#9e9e9e');
+    const hint = allApprox
+      ? `<div style="padding:8px 12px;font-size:11px;color:#b71c1c;background:#fff3e0;line-height:1.5;">
+           ⚠ 施設・番地までは特定できませんでした（市区町村などの広域中心です）。<br>
+           正式名称や住所で検索し直すか、近くまで移動して「🗺 地図で指定」で正確な位置を指定してください。
+         </div>`
+      : '<div style="padding:8px 12px;font-size:11px;color:#666;background:#f5f5f5;">候補を選択してください（上ほど精度が高い順）：</div>';
+
+    resultsEl.innerHTML = hint +
       cands.map((c, i) => {
-        const badge = `<span style="display:inline-block;font-size:10px;color:#fff;background:${c.source==='地理院'?'#2e7d32':'#1a73e8'};border-radius:3px;padding:0 5px;margin-left:6px;">${c.source}</span>`;
+        const badge = `<span style="display:inline-block;font-size:10px;color:#fff;background:${sourceColor(c.source)};border-radius:3px;padding:0 5px;margin-left:6px;">${c.source}</span>`;
+        const approxTag = c.approx ? '<span style="font-size:10px;color:#b71c1c;margin-left:6px;">広域</span>' : '';
         return `<div class="search-result-item" onclick="pickResult('${type}', ${i})">
-          <div class="result-name">${c.name || c.addr}${badge}</div>
+          <div class="result-name">${c.name || c.addr}${badge}${approxTag}</div>
           <div class="result-addr">${c.addr}</div>
         </div>`;
       }).join('');
