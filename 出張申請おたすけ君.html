@@ -728,6 +728,13 @@ let editLegIndex = 0;       // 修正対象の区間
 let viaMarkers = [];        // 経由地マーカー
 let savedDests = JSON.parse(localStorage.getItem('saved-dests') || '[]');
 
+// ▼▼▼ 経路検索用：GAS（Google Apps Script）ウェブアプリのURL ▼▼▼
+// コード.gs をデプロイして発行された「ウェブアプリURL」をここに貼り付けてください。
+//   例: 'https://script.google.com/macros/s/AKfycbxXXXXXXXXXXXX/exec'
+// 未設定の場合は、ルート検索が直線距離×1.3の推定値にフォールバックします。
+const GAS_API_URL = 'ここにGASウェブアプリのURLを貼り付けてください';
+// ▲▲▲ ここまで ▲▲▲
+
 // 初期登録する用務地（初回起動時にブラウザ側でジオコーディングして保存）
 const DEFAULT_DESTS = [
   { name: '小倉北区役所', address: '北九州市小倉北区大手町1-1' },
@@ -1151,10 +1158,9 @@ function computeOverlap(legGeometry, commuteGeometry, thresholdMeters) {
   return { segments, km: meters / 1000 };
 }
 
-let osrmAvailable = true;
-let valhallaAvailable = true;
+let gasAvailable = true;
 
-// encoded polyline（精度6＝Valhalla形式）をデコード → [[lat,lng],...]
+// encoded polyline をデコード → [[lat,lng],...]（Google=精度5 / Valhalla=精度6）
 function decodePolyline(encoded, precision) {
   let index = 0, lat = 0, lng = 0;
   const coords = [], factor = Math.pow(10, precision || 6);
@@ -1176,87 +1182,53 @@ function routeKey(from, to, costing) {
   return `${from.lat.toFixed(6)},${from.lng.toFixed(6)};${to.lat.toFixed(6)},${to.lng.toFixed(6)};${costing}`;
 }
 
-// trip（1区間でも複数経由でも）の全legの形状を連結して1本のルートにする
-function valhallaTripToRoute(trip) {
-  if (!trip || !trip.legs || !trip.legs.length) return null;
-  let coords = [];
-  trip.legs.forEach(leg => {
-    if (!leg.shape) return;
-    const ll = decodePolyline(leg.shape, 6).map(c => [c[1], c[0]]);
-    if (coords.length && ll.length) ll.shift(); // 接続点の重複を除く
-    coords = coords.concat(ll);
-  });
-  if (coords.length < 2) return null;
-  const s = trip.summary;
-  return {
-    distance: s.length * 1000,
-    duration: s.time,
-    geometry: { type: 'LineString', coordinates: coords },
-    hasToll: !!s.has_toll,
-    method: 'valhalla'
-  };
+// Googleのエンコード済みポリライン（精度5）→ GeoJSON LineString（座標は[lng,lat]）
+function polylineToGeoJSON(encoded) {
+  const latlngs = decodePolyline(encoded || '', 5);   // [[lat,lng],...]
+  return { type: 'LineString', coordinates: latlngs.map(c => [c[1], c[0]]) };
 }
 
-// Valhalla（FOSSGIS公開サーバ／APIキー不要）に問い合わせ。pointsは[{lat,lng},...]
-async function valhallaFetch(points, costing, alternates) {
+// GAS（Google Apps Script）プロキシAPIを叩いてGoogleマップのルートを取得する。
+//   points: [{lat,lng}, ...]（先頭=出発地、末尾=目的地、中間=経由地）
+//   costing: 'highway'（高速・有料あり）/ 'nohighway'（高速・有料を回避）
+//   wantAlternatives: 代替ルートも取得するか
+// 返り値: variants 配列 [{ distance(m), duration(s), geometry, hasToll, method:'google' }]
+async function gasFetchRoutes(points, costing, wantAlternatives) {
+  if (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0) {
+    throw new Error('GAS_API_URL が未設定です（GASをデプロイしてURLを設定してください）');
+  }
+  const origin = points[0];
+  const dest = points[points.length - 1];
+  const vias = points.slice(1, -1);
   const noHw = costing === 'nohighway';
-  const body = {
-    locations: points.map(p => ({ lat: p.lat, lon: p.lng })),
-    costing: 'auto',
-    // 一般道ルート: use_highways=0.5（高速は避けるが、高速の下を通る国道・トンネル等は許可して遠回りを防ぐ）／有料は回避
-    costing_options: { auto: { use_highways: noHw ? 0.5 : 1, use_tolls: noHw ? 0 : 1 } },
-    directions_options: { units: 'kilometers' }
-  };
-  if (alternates) body.alternates = alternates;
-  const res = await fetch('https://valhalla1.openstreetmap.de/route', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body)
+
+  const params = new URLSearchParams({
+    origin: `${origin.lat},${origin.lng}`,
+    dest: `${dest.lat},${dest.lng}`,
+    avoidHighways: noHw ? '1' : '0',
+    avoidTolls:    noHw ? '1' : '0',
+    alternatives:  wantAlternatives ? '1' : '0',
+    // 一般道（有料回避）モードでは常に有料なし。高速許可モードのときだけ有料判定を行う
+    detectToll:    noHw ? '0' : '1'
   });
-  if (!res.ok) throw new Error(`Valhalla HTTP ${res.status}`);
-  return res.json();
-}
+  if (vias.length) {
+    params.set('waypoints', vias.map(v => `${v.lat},${v.lng}`).join('|'));
+  }
 
-// costing='nohighway'で高速・有料を回避。代替ルートも取得（2地点用）
-async function valhallaRouteAll(from, to, costing) {
-  const data = await valhallaFetch([from, to], costing, 2);
-  const variants = [];
-  const primary = valhallaTripToRoute(data.trip);
-  if (primary) variants.push(primary);
-  (data.alternates || []).forEach(a => {
-    const r = valhallaTripToRoute(a.trip);
-    if (r) variants.push(r);
-  });
-  if (!variants.length) throw new Error('Valhalla: ルートなし');
-  return variants;
-}
-
-// 経由地ありのValhallaルート（代替なし、1本）
-async function valhallaRouteVia(points, costing) {
-  const data = await valhallaFetch(points, costing, 0);
-  const r = valhallaTripToRoute(data.trip);
-  if (!r) throw new Error('Valhalla: ルートなし');
-  return r;
-}
-
-async function osrmRouteMulti(points) {
-  const coordStr = points.map(p => p.lng + ',' + p.lat).join(';');
-  const url = 'https://router.project-osrm.org/route/v1/driving/' + coordStr + '?overview=full&geometries=geojson';
-  const res = await fetch(url);
-  if (!res.ok) throw new Error('OSRM HTTP ' + res.status);
+  // 単純GET（カスタムヘッダを付けず、CORSプリフライトを避ける）
+  const res = await fetch(GAS_API_URL + '?' + params.toString());
+  if (!res.ok) throw new Error(`GAS HTTP ${res.status}`);
   const data = await res.json();
-  if (data.code !== 'Ok' || !data.routes.length) throw new Error('OSRM: ルートなし');
-  return {
-    distance: data.routes[0].distance,
-    duration: data.routes[0].duration,
-    geometry: data.routes[0].geometry,
-    hasToll: false,
-    method: 'osrm'
-  };
-}
+  if (!data.ok) throw new Error(data.error || 'GASエラー');
+  if (!data.routes || !data.routes.length) throw new Error('GAS: ルートなし');
 
-async function osrmRoute(from, to) {
-  return osrmRouteMulti([from, to]);
+  return data.routes.map(r => ({
+    distance: r.distance,                       // メートル
+    duration: r.duration,                       // 秒
+    geometry: polylineToGeoJSON(r.polyline),    // GeoJSON LineString（[lng,lat]）
+    hasToll: !!r.hasToll,
+    method: 'google'
+  }));
 }
 
 // 経由地を含む点列を直線で連結（最終フォールバック）
@@ -1273,13 +1245,14 @@ function straightConcat(points) {
 // 経由地を含む点列でルート取得（手動修正用）。2点なら通常のgetRouteを使う
 async function getRouteVia(points, costing, altIndex) {
   if (points.length <= 2) return getRoute(points[0], points[points.length - 1], costing, altIndex);
-  if (valhallaAvailable) {
-    try { return await valhallaRouteVia(points, costing); }
-    catch (e) { console.warn('[Valhalla 経由]', e.message); valhallaAvailable = false; }
-  }
-  if (osrmAvailable) {
-    try { return await osrmRouteMulti(points); }
-    catch (e) { console.warn('[OSRM 経由]', e.message); osrmAvailable = false; }
+  if (gasAvailable) {
+    try {
+      const variants = await gasFetchRoutes(points, costing, false);
+      return variants[0];
+    } catch (e) {
+      console.warn('[GAS 経由] 失敗、直線連結にフォールバック:', e.message);
+      gasAvailable = false;
+    }
   }
   return straightConcat(points);
 }
@@ -1288,30 +1261,21 @@ async function getRouteVia(points, costing, altIndex) {
 async function getRoute(from, to, costing, altIndex) {
   costing = costing || 'highway';
   altIndex = altIndex || 0;
-  if (valhallaAvailable) {
+  if (gasAvailable) {
     const key = routeKey(from, to, costing);
     let variants = routeCache.get(key);
     if (!variants) {
       try {
-        variants = await valhallaRouteAll(from, to, costing);
+        variants = await gasFetchRoutes([from, to], costing, true);
         routeCache.set(key, variants);
       } catch (e) {
-        console.warn('[Valhalla] 失敗、OSRMにフォールバック:', e.message);
-        valhallaAvailable = false;
+        console.warn('[GAS] 失敗、直線距離にフォールバック:', e.message);
+        gasAvailable = false;
       }
     }
     if (variants) return variants[Math.min(altIndex, variants.length - 1)];
   }
-  // フォールバック：OSRM（高速回避・代替ルートは非対応）
-  if (osrmAvailable) {
-    try {
-      return await osrmRoute(from, to);
-    } catch (e) {
-      console.warn('[OSRM] 失敗、直線距離にフォールバック:', e.message);
-      osrmAvailable = false;
-    }
-  }
-  // 最終フォールバック：直線距離×1.3
+  // 最終フォールバック：直線距離×1.3（GASに接続できないとき）
   return {
     distance: haversineDistance(from, to) * 1.3,
     duration: 0,
