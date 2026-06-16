@@ -47,17 +47,20 @@
 ## 公開方法
 
 ### A. GASでアプリごと配信（学校などGitHubが開けない環境向け・推奨）
-すべて Google ドメイン（`script.google.com`）で完結するため、GitHub にアクセスできない環境でも使えます。
-1. GAS プロジェクトに `コード.gs` を貼り付け
-2. ＋（ファイル追加）→「HTML」で **`page`** という名前のファイルを作り、`index.html`（=`page.html`）の中身を全部貼り付け
-3. デプロイ（ウェブアプリ／実行=自分／アクセス=全員）
-4. 発行された `.../exec` を開くと **アプリ画面が表示**される
+学校PCは `script.google.com` だけ見られればよく、HTMLの取得はGAS（Googleのサーバー）が代行します。
+**巨大HTMLを手で貼り付ける必要はありません。**
+1. GitHubリポジトリを **Public** にする（GASがHTMLを読みに行くため）
+2. GAS プロジェクトに `コード.gs` を貼り付け、`APP_HTML_URL` が自分のリポジトリの raw URL になっているか確認
+   （例：`https://raw.githubusercontent.com/edupower07/maps/main/index.html`）
+3. デプロイ（ウェブアプリ／実行=自分／アクセス=全員）。初回は UrlFetch の権限を許可
+4. 発行された `.../exec` を開くと **アプリ画面が表示**される（GASが `index.html` を取得して配信）
 5. Googleサイトに、その exec URL を iframe で埋め込む：
    ```html
    <iframe src="https://script.google.com/macros/s/XXXX/exec" width="100%" height="900" frameborder="0"></iframe>
    ```
    （Googleサイト → 挿入 → 埋め込む → 「コードを埋め込む」に貼り付け）
 
+> `index.html` を更新すると、最大10分ほどで配信内容も自動更新されます（手貼り不要）。
 > 印刷は埋め込み枠内だと不安定なので、印刷時は exec URL を直接開いて使ってください。
 
 ### B. GitHub Pages（リポジトリがPublicの場合）
@@ -65,8 +68,7 @@
 `https://<ユーザー名>.github.io/<リポジトリ名>/` で公開されます。
 
 ## フォルダ構成
-- `index.html` … アプリ本体（GitHub Pages用／ローカルで開く用のエントリ）
-- `page.html` … 同じ本体（GASの `page` HTMLファイルに貼り付ける用）
+- `index.html` … アプリ本体（GASが自動取得して配信／GitHub Pages・ローカルでも開ける）
 - `出張申請おたすけ君.html` … 同じ本体（ローカルで開く用）
 - `コード.gs` … アプリ配信＋経路/住所検索API（Google Apps Script にデプロイして使う）
 

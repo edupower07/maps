@@ -6,26 +6,23 @@
  * Google の高精度なルート・住所データを使います。
  *
  * このGASは2役を兼ねます：
- *   (1) パラメータなしでアクセス → アプリ本体(HTML)を配信（page.html）
+ *   (1) パラメータなしでアクセス → アプリ本体(HTML)を配信（index.htmlを自動取得）
  *   (2) origin/dest や q を付けてアクセス → ルート/住所検索の結果をJSONで返す
  * これにより GitHub を使わず、すべて Google ドメイン（script.google.com）で完結し、
  * 学校など GitHub が開けない環境でも Google サイトに埋め込んで使えます。
  *
  * 【セットアップ手順】
- *   1. https://script.google.com で新規プロジェクトを作成
- *   2. このコードを「コード.gs」に貼り付け
- *   3. ＋（ファイル追加）→「HTML」で "page" という名前のファイルを作り、
- *      index.html（= page.html）の中身を全部貼り付ける
- *   4. 右上「デプロイ」→「新しいデプロイ」
- *      - 種類: ウェブアプリ
- *      - 次のユーザーとして実行: 自分
- *      - アクセスできるユーザー: 全員（匿名を含む）
- *   5. 発行された「ウェブアプリ URL（.../exec）」を開くと、アプリ画面が表示される
+ *   1. GitHubリポジトリを Public にする（GASがHTMLを読みに行くため）
+ *   2. （前回の）GASプロジェクトを開き、このコードを貼り替えて保存
+ *   3. 下の APP_HTML_URL が自分のリポジトリの raw URL になっているか確認
+ *   4. デプロイ → デプロイを管理 → 鉛筆 → バージョン「新バージョン」→ デプロイ
+ *      （初回は UrlFetch の権限を求められるので許可する）
+ *   5. exec URL を開くと、アプリ画面が表示される（GASが index.html を取得して配信）
  *   6. （任意）Googleサイトに、その exec URL を iframe で埋め込む
  *
- * 【page.html 側の設定】
- *   page.html 内の GAS_API_URL は、この同じ exec URL を指定しておく
- *   （アプリが自分自身のURLを叩いてルート/住所検索する）。
+ * ※ 巨大HTMLを手で貼り付ける必要はありません。GASが自動取得します。
+ *    index.html を更新すれば、最大10分ほどで配信内容も自動更新されます。
+ *    page.html 内の GAS_API_URL は、この exec URL を指定しておくこと。
  *
  * 【リクエスト（GET クエリパラメータ）】
  *   origin        必須  "緯度,経度"            例: 34.781,135.452
@@ -44,6 +41,10 @@
  *           hasToll  … 有料道路を含むと推定されるか（boolean）
  *   失敗: { ok:false, error:"..." }
  */
+
+// アプリ本体(index.html)の raw URL。リポジトリ/ブランチが違う場合はここを直す。
+// ※ この方式は GitHubリポジトリが Public である必要があります。
+var APP_HTML_URL = 'https://raw.githubusercontent.com/edupower07/maps/main/index.html';
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
@@ -106,10 +107,45 @@ function doGet(e) {
   // これにより GitHub を使わず、すべて Google ドメイン（script.google.com）で完結する。
   // Googleサイトに埋め込めるよう、iframe表示を許可（ALLOWALL）する。
   // ※ GASプロジェクトに「page.html」という名前のHTMLファイル（index.html の中身）が必要です。
-  return HtmlService.createHtmlOutputFromFile('page')
-    .setTitle('出張距離測定・申請ガイド')
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
+  return serveApp_();
+}
+
+// アプリ本体(HTML)を取得して配信する。Googleサイトに埋め込めるよう iframe を許可する。
+function serveApp_() {
+  try {
+    var html = fetchAppHtml_();
+    return HtmlService.createHtmlOutput(html)
+      .setTitle('出張距離測定・申請ガイド')
+      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+      .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
+  } catch (err) {
+    var msg = String((err && err.message) || err);
+    return HtmlService.createHtmlOutput(
+      '<div style="font-family:sans-serif;padding:24px;line-height:1.7">' +
+      '<h2>アプリを表示できませんでした</h2>' +
+      '<p>' + msg + '</p>' +
+      '<p>確認：①GitHubリポジトリが <b>Public</b> になっているか ②コード.gs の APP_HTML_URL が正しいか</p>' +
+      '</div>'
+    ).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  }
+}
+
+// index.html をネット経由で取得（Googleのサーバーが代行）。10分間キャッシュ。
+function fetchAppHtml_() {
+  var cache = CacheService.getScriptCache();
+  var key = 'app-html-v1';
+  var cached = cache.get(key);
+  if (cached) return cached;
+
+  var res = UrlFetchApp.fetch(APP_HTML_URL, { muteHttpExceptions: true, followRedirects: true });
+  var code = res.getResponseCode();
+  if (code !== 200) {
+    throw new Error('アプリHTMLの取得に失敗しました（HTTP ' + code + '）。リポジトリがPublicか、URLが正しいか確認してください。');
+  }
+  var html = res.getContentText('UTF-8');
+  // CacheServiceは1項目100KBまで。超えるときはキャッシュせず毎回取得する。
+  try { if (html.length < 100000) cache.put(key, html, 600); } catch (e) {}
+  return html;
 }
 
 /**
