@@ -928,6 +928,47 @@ function normNom(item) {
   };
 }
 
+// 検索語から「施設名らしい部分」を取り出す（先頭の都道府県・市区町村・区を除く）。
+// 例: 「北九州市教育センター」→「教育センター」（OSMの正式名 北九州市立教育センター にヒットしやすくする）
+function facilityNamePart(q) {
+  const s = (q || '').trim();
+  const stripped = s.replace(/^([^\d\s]{1,8}?[都道府県])?([^\d\s]{1,10}?[市郡])?([^\d\s]{1,8}?区)?/, '').trim();
+  return stripped.length >= 2 ? stripped : s;
+}
+
+// Overpass（OSMのPOI検索／APIキー不要）で、指定エリア周辺の施設を名前であいまい検索する。
+// center を渡すとその周辺、無ければ現在の地図表示範囲の中心を使う。
+async function overpassSearch(query, center) {
+  const name = facilityNamePart(query);
+  if (!name) return [];
+  const c = center || map.getCenter();
+  const d = 0.35; // 中心から約±35〜40km四方
+  const bbox = `${(c.lat - d).toFixed(4)},${(c.lng - d).toFixed(4)},${(c.lat + d).toFixed(4)},${(c.lng + d).toFixed(4)}`;
+  const esc = name.replace(/["\\]/g, '\\$&');
+  const ql = `[out:json][timeout:25];nwr["name"~"${esc}",i](${bbox});out center 30;`;
+  const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', body: ql });
+  if (!res.ok) throw new Error('Overpass HTTP ' + res.status);
+  const data = await res.json();
+  return (data.elements || []).map(normOverpass).filter(Boolean);
+}
+
+function normOverpass(el) {
+  const lat = el.lat != null ? el.lat : (el.center && el.center.lat);
+  const lng = el.lon != null ? el.lon : (el.center && el.center.lon);
+  if (lat == null || lng == null) return null;
+  const t = el.tags || {};
+  const name = t.name || t['name:ja'] || '';
+  if (!name) return null;
+  const parts = [];
+  if (t['addr:province'] || t['addr:state']) parts.push(t['addr:province'] || t['addr:state']);
+  if (t['addr:city']) parts.push(t['addr:city']);
+  if (t['addr:suburb']) parts.push(t['addr:suburb']);
+  if (t['addr:neighbourhood']) parts.push(t['addr:neighbourhood']);
+  if (t['addr:block_number']) parts.push(t['addr:block_number']);
+  if (t['addr:housenumber']) parts.push(t['addr:housenumber']);
+  return { lat: +lat, lng: +lng, name, addr: parts.join('') || name, source: 'OSM施設', approx: false };
+}
+
 // 近接する重複候補を除去（約60m以内は同一とみなす）
 function dedupeCandidates(list) {
   const out = [];
@@ -1019,6 +1060,20 @@ async function searchAddress(type) {
     // 郵便番号・全角・丁目番号などを正規化し、表記ゆれ候補を順に試す
     let cands = await combinedSearchSmart(query);
 
+    // 施設名がうまく出ない（0件 or 広域中心だけ）ときは、OSMのPOI検索(Overpass)で補強する
+    const needPoi = cands.length === 0 || cands.every(c => c.approx);
+    if (needPoi) {
+      const approxHit = cands.find(c => c.approx);              // 広域中心をbboxの中心に使う
+      const center = approxHit ? { lat: approxHit.lat, lng: approxHit.lng } : null;
+      try {
+        const poi = await overpassSearch(query, center);
+        if (poi.length) {
+          console.log('[Overpass件数]', poi.length);
+          cands = dedupeCandidates([...poi, ...cands]);          // 施設POIを最優先
+        }
+      } catch (e) { console.warn('[Overpass失敗]', e.message); }
+    }
+
     if (cands.length === 0) {
       const moved = await recenterToArea(query);
       if (moved) {
@@ -1040,7 +1095,7 @@ async function searchAddress(type) {
     window._searchResults[type] = cands;
 
     const allApprox = cands.every(c => c.approx);
-    const sourceColor = s => s === '地理院' ? '#2e7d32' : (s === 'Google' ? '#1a73e8' : '#9e9e9e');
+    const sourceColor = s => s === '地理院' ? '#2e7d32' : (s === 'Google' ? '#1a73e8' : (s === 'OSM施設' ? '#7b1fa2' : '#9e9e9e'));
     const hint = allApprox
       ? `<div style="padding:8px 12px;font-size:11px;color:#b71c1c;background:#fff3e0;line-height:1.5;">
            ⚠ 施設・番地までは特定できませんでした（市区町村などの広域中心です）。<br>
