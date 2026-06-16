@@ -549,6 +549,20 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
       </button>
     </div>
 
+    <!-- 通勤ルート（初期設定・保存される） -->
+    <div class="section">
+      <div class="section-title"><span class="icon">🛣</span> 通勤ルート（初期設定）</div>
+      <div class="map-note" style="margin-top:0;">
+        自宅と勤務場所（学校）を登録し、<strong>いつもの通勤ルートを1本だけ確定</strong>してください。
+        ここで保存した通勤ルートは常に基準として保存され、出張ルートと重なる区間（＝旅費から差し引く区間）の判定に毎回使われます。
+      </div>
+      <div id="commute-status"></div>
+      <div id="commute-choices"></div>
+      <button class="btn btn-primary" style="width:100%;margin-top:8px;" id="btn-setup-commute" onclick="setupCommute()">
+        🛣 通勤ルートを確定する
+      </button>
+    </div>
+
     <!-- 出張パターン -->
     <div class="section">
       <div class="section-title"><span class="icon">🚗</span> 出張パターン選択</div>
@@ -626,6 +640,13 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
     <h2>📋 出張申請手順（曽根小学校）</h2>
 
     <ol class="step-list">
+      <li data-step="0">
+        <strong>【最初の1回だけ】通勤ルートを確定する</strong>
+        <div class="step-detail">
+          「距離測定」タブで自宅と学校を登録し、「通勤ルート（初期設定）」で<strong>いつもの通勤ルートを1本確定</strong>します。
+          これは保存され、以降の出張計算で重複区間（差し引く区間）の基準として毎回使われます（自宅・学校を変えたときだけ再設定）。
+        </div>
+      </li>
       <li data-step="1">
         <strong>校務支援システムで出張を申請する</strong>
         <div class="step-detail">校務支援システムにログインし、出張申請を入力します。</div>
@@ -633,7 +654,8 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
       <li data-step="2">
         <strong>このアプリで距離を測定する</strong>
         <div class="step-detail">
-          「距離測定」タブで自宅・学校・用務地を登録し、出張パターンを選んで距離を計算します。<br>
+          「距離測定」タブで用務地を登録し、出張パターンを選んで距離を計算します。
+          確定済みの通勤ルートと重なる区間が自動で検出され、その分を差し引いた申請距離が出ます。<br>
           計測した距離を出張申請に入力してください。
         </div>
       </li>
@@ -735,6 +757,10 @@ let savedDests = JSON.parse(localStorage.getItem('saved-dests') || '[]');
 const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyzE_RzZqLbA5_z4AaACwpWB_4EK4XqSwKxvffdjsqtKVlVF9hFntwsYdJZJUnIeXCK/exec';
 // ▲▲▲ ここまで ▲▲▲
 
+// 確定・保存された通勤ルート（自宅↔学校）。{ home, school, geometry, distanceKm, method }
+let savedCommute = JSON.parse(localStorage.getItem('commute-route') || 'null');
+let commutePreviewLayer = null;   // 地図上に常時表示する通勤ルートのプレビュー
+
 // 初期登録する用務地（初回起動時にブラウザ側でジオコーディングして保存）
 const DEFAULT_DESTS = [
   { name: '小倉北区役所', address: '北九州市小倉北区大手町1-1' },
@@ -763,6 +789,8 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 loadSavedLocations();
 renderSavedDests();
 ensureDefaultDests();
+renderCommuteStatus();
+drawCommutePreview();
 
 map.on('click', function(e) {
   if (editMode) { addViaPoint(e.latlng); return; }
@@ -1067,6 +1095,7 @@ async function setLocation(type, lat, lng, displayName) {
   if (type === 'dest' && locations.dest) {
     document.getElementById('btn-save-dest').style.display = 'inline-block';
   }
+  if (type === 'home' || type === 'school') renderCommuteStatus();
 
   showToast(`${LABELS[type]}を設定しました`);
 }
@@ -1078,7 +1107,143 @@ function clearLocation(type) {
   document.getElementById(`card-${type}`).classList.remove('registered');
   if (markers[type]) { map.removeLayer(markers[type]); delete markers[type]; }
   if (type === 'dest') document.getElementById('btn-save-dest').style.display = 'none';
+  if (type === 'home' || type === 'school') renderCommuteStatus();
   saveLocations();
+}
+
+// ===== 通勤ルート（初期設定・常時保存） =====
+
+// 保存済み通勤ルートの端点が、現在登録中の自宅/学校とほぼ一致しているか（約80m以内）
+function commuteMatchesLocations() {
+  if (!savedCommute || !locations.home || !locations.school) return false;
+  return haversineDistance(savedCommute.home, locations.home) < 80 &&
+         haversineDistance(savedCommute.school, locations.school) < 80;
+}
+
+// 通勤ルートの設定状況を表示
+function renderCommuteStatus() {
+  const statusEl = document.getElementById('commute-status');
+  const btn = document.getElementById('btn-setup-commute');
+  if (!statusEl || !btn) return;
+
+  if (savedCommute) {
+    const outdated = !commuteMatchesLocations();
+    statusEl.innerHTML = outdated
+      ? `<div class="map-note" style="margin-top:8px;background:#fff3e0;border-color:#ffb300;">
+           ⚠ <strong>自宅または学校の位置が変わっています。</strong>通勤ルートを再設定してください。
+           <div style="margin-top:6px;">保存中の通勤ルート：約 ${savedCommute.distanceKm.toFixed(1)} km</div>
+         </div>`
+      : `<div class="result-box" style="margin-top:8px;padding:12px;">
+           <div style="font-weight:700;color:#1b5e20;">✅ 通勤ルート確定済み</div>
+           <div class="result-row"><span>通勤距離（自宅↔学校）</span><span class="val">${savedCommute.distanceKm.toFixed(1)} km</span></div>
+           <div style="font-size:12px;color:#555;margin-top:4px;">この通勤ルートを基準に、出張ルートとの重複区間を判定します。</div>
+         </div>`;
+    btn.textContent = outdated ? '🛣 通勤ルートを再設定する' : '🛣 通勤ルートを設定し直す';
+    btn.className = outdated ? 'btn btn-primary' : 'btn btn-secondary';
+    btn.style.width = '100%';
+    btn.style.marginTop = '8px';
+  } else {
+    statusEl.innerHTML = `<div style="font-size:12px;color:#777;margin-top:8px;">まだ通勤ルートは設定されていません。自宅と学校を登録してから「確定する」を押してください。</div>`;
+    btn.textContent = '🛣 通勤ルートを確定する';
+    btn.className = 'btn btn-primary';
+    btn.style.width = '100%';
+    btn.style.marginTop = '8px';
+  }
+}
+
+// 通勤ルートの候補を取得して、ユーザーに選んで確定してもらう
+async function setupCommute() {
+  if (!locations.home)   { showToast('先に自宅を登録してください'); return; }
+  if (!locations.school) { showToast('先に勤務場所（学校）を登録してください'); return; }
+
+  const choicesEl = document.getElementById('commute-choices');
+  choicesEl.innerHTML = '';
+  showLoading(true, '通勤ルートを検索中…');
+  try {
+    routeCache.clear();
+    const variants = [];
+    // 高速ありルート（代替含む）と一般道ルートを集める
+    try { (await gasFetchRoutes([locations.home, locations.school], 'highway', true)).forEach(v => variants.push({ ...v, costing: 'highway' })); } catch (e) { console.warn('[通勤 highway]', e.message); }
+    try { (await gasFetchRoutes([locations.home, locations.school], 'nohighway', false)).forEach(v => variants.push({ ...v, costing: 'nohighway' })); } catch (e) { console.warn('[通勤 nohighway]', e.message); }
+
+    if (!variants.length) {
+      // GASに繋がらないときは直線で確定（推定）
+      const d = haversineDistance(locations.home, locations.school) * 1.3;
+      variants.push({ distance: d, duration: 0, geometry: straightLineGeometry(locations.home, locations.school), hasToll: false, method: 'straight', costing: 'highway' });
+    }
+
+    // 距離が近い候補は重複として除去
+    const uniq = [];
+    variants.forEach(v => {
+      if (!uniq.some(u => Math.abs(u.distance - v.distance) < 100)) uniq.push(v);
+    });
+    window._commuteVariants = uniq;
+
+    choicesEl.innerHTML = '<div style="font-size:12px;font-weight:600;color:#1a73e8;margin:8px 0 6px;">いつも使う通勤ルートを選んでください：</div>' +
+      uniq.map((v, i) => {
+        const icon = v.costing === 'highway' ? '⚡' : '🚗';
+        const label = v.method === 'straight' ? '推定（直線）' : (v.costing === 'highway' ? '高速道路を使うルート' : '一般道のみのルート');
+        const toll = v.hasToll ? '<span style="color:#c62828;font-weight:600;font-size:11px;">有料あり</span>' : '<span style="color:#2e7d32;font-weight:600;font-size:11px;">通行料なし</span>';
+        return `<div class="location-card" style="cursor:pointer;" onmouseover="previewCommuteVariant(${i})" onclick="chooseCommute(${i})">
+          <div style="display:flex;justify-content:space-between;align-items:center;">
+            <span style="font-weight:600;">${icon} ${label}</span>
+            <span style="font-weight:700;color:#1b5e20;">${(v.distance/1000).toFixed(1)} km</span>
+          </div>
+          <div style="font-size:11px;color:#666;margin-top:2px;">約 ${Math.round(v.duration/60)} 分　${toll}</div>
+        </div>`;
+      }).join('') +
+      '<div style="font-size:11px;color:#999;margin-bottom:6px;">候補にマウスを乗せると地図で確認できます。クリックで確定します。</div>';
+
+    if (uniq.length === 1) {
+      // 候補が1本だけならそのまま確定
+      chooseCommute(0);
+    } else {
+      previewCommuteVariant(0);
+    }
+  } catch (e) {
+    console.error('[通勤ルート設定エラー]', e);
+    showToast('通勤ルートの取得に失敗しました: ' + e.message);
+  } finally {
+    showLoading(false);
+  }
+}
+
+// 候補を地図上にプレビュー表示
+function previewCommuteVariant(i) {
+  const v = window._commuteVariants && window._commuteVariants[i];
+  if (!v) return;
+  if (commutePreviewLayer) { map.removeLayer(commutePreviewLayer); commutePreviewLayer = null; }
+  commutePreviewLayer = L.geoJSON(v.geometry, { style: { color: '#9e9e9e', weight: 5, opacity: 0.9 } }).addTo(map);
+  try { map.fitBounds(commutePreviewLayer.getBounds(), { padding: [50, 50] }); } catch {}
+}
+
+// 選んだ候補を通勤ルートとして確定・保存
+function chooseCommute(i) {
+  const v = window._commuteVariants && window._commuteVariants[i];
+  if (!v) return;
+  savedCommute = {
+    home: { lat: locations.home.lat, lng: locations.home.lng },
+    school: { lat: locations.school.lat, lng: locations.school.lng },
+    geometry: v.geometry,
+    distanceKm: v.distance / 1000,
+    method: v.method || 'google'
+  };
+  localStorage.setItem('commute-route', JSON.stringify(savedCommute));
+  document.getElementById('commute-choices').innerHTML = '';
+  renderCommuteStatus();
+  drawCommutePreview();
+  showToast(`通勤ルートを確定しました（${savedCommute.distanceKm.toFixed(1)} km）`);
+}
+
+// 保存済み通勤ルートを地図に常時表示（薄いグレー）
+function drawCommutePreview() {
+  if (commutePreviewLayer) { map.removeLayer(commutePreviewLayer); commutePreviewLayer = null; }
+  if (!savedCommute || !savedCommute.geometry) return;
+  commutePreviewLayer = L.geoJSON(savedCommute.geometry, { style: { color: '#9e9e9e', weight: 4, opacity: 0.7, dashArray: '6,6' } }).addTo(map);
+}
+
+function clearCommutePreview() {
+  if (commutePreviewLayer) { map.removeLayer(commutePreviewLayer); commutePreviewLayer = null; }
 }
 
 function selectPattern(num) {
@@ -1488,9 +1653,22 @@ async function buildPattern(costing, altIndex) {
   const plan = legPlan(selectedPattern);
 
   let commuteRoute = null, dc = 0;
-  if (plan.hasCommute && locations.home && locations.school) {
-    commuteRoute = await getRoute(locations.home, locations.school, costing, altIndex);
-    dc = commuteRoute.distance / 1000;
+  if (plan.hasCommute) {
+    if (savedCommute && savedCommute.geometry) {
+      // 確定・保存済みの通勤ルートを常に基準として使う（候補ごとにブレない）
+      commuteRoute = {
+        geometry: savedCommute.geometry,
+        distance: savedCommute.distanceKm * 1000,
+        duration: 0,
+        hasToll: false,
+        method: savedCommute.method || 'google'
+      };
+      dc = savedCommute.distanceKm;
+    } else if (locations.home && locations.school) {
+      // 未設定時のフォールバック（その場で計算）
+      commuteRoute = await getRoute(locations.home, locations.school, costing, altIndex);
+      dc = commuteRoute.distance / 1000;
+    }
   }
 
   const legs = [];
@@ -1533,15 +1711,28 @@ async function calculateRoute() {
   if (!selectedPattern) { showToast('出張パターンを選択してください'); return; }
 
   const needHome = [2, 3, 4].includes(selectedPattern);
-  const needSchool = [1, 2, 3, 4].includes(selectedPattern); // 重複区間の判定に通勤経路（自宅↔学校）が必要
+  const needSchool = [1, 2, 3, 4].includes(selectedPattern); // 学校は区間の端点として必要
+  const needCommute = [2, 3, 4].includes(selectedPattern);   // 重複判定に確定済み通勤ルートが必要
 
   if (needHome && !locations.home) { showToast('自宅を登録してください'); return; }
   if (needSchool && !locations.school) { showToast('勤務場所（学校）を登録してください'); return; }
   if (!locations.dest) { showToast('用務地を登録してください'); return; }
+  if (needCommute && !savedCommute) {
+    showToast('先に「通勤ルート（初期設定）」で通勤ルートを確定してください');
+    document.getElementById('btn-setup-commute').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (needCommute && savedCommute && !commuteMatchesLocations()) {
+    showToast('自宅／学校の位置が変わっています。通勤ルートを再設定してください');
+    renderCommuteStatus();
+    document.getElementById('btn-setup-commute').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
 
   showLoading(true, '計算中…');
   exitEditMode();
   clearRoutes();
+  clearCommutePreview();
   routeCache.clear();
 
   try {
