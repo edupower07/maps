@@ -36,6 +36,18 @@
 function doGet(e) {
   try {
     var p = (e && e.parameter) || {};
+
+    // パラメータなしで（ブラウザで直接URLを開くなどして）アクセスされた場合は、
+    // 「APIは正常に稼働中」であることが分かる案内を返す（これはエラーではない）。
+    if (!p.origin && !p.dest) {
+      return json_({
+        ok: true,
+        status: 'ready',
+        message: 'ルート検索APIは正常に稼働しています。origin と dest を指定してください。',
+        example: '?origin=33.8835,130.8752&dest=33.8870,130.8800'
+      });
+    }
+
     var origin = parseLatLng_(p.origin);
     var dest   = parseLatLng_(p.dest);
     if (!origin || !dest) {
