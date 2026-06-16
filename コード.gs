@@ -103,31 +103,43 @@ function doGet(e) {
     }
   }
 
-  // ── パラメータなしのときは、アプリ本体（HTML）を配信する ──
-  // これにより GitHub を使わず、すべて Google ドメイン（script.google.com）で完結する。
-  // Googleサイトに埋め込めるよう、iframe表示を許可（ALLOWALL）する。
-  // ※ GASプロジェクトに「page.html」という名前のHTMLファイル（index.html の中身）が必要です。
-  return serveApp_();
+  // ── アプリ本体のHTMLを「テキスト」として返す（起動ページから読み込む用） ──
+  // Apps Script に大きなHTMLを解釈させると document.write でエラーになるため、
+  // HTMLは解釈させずテキストとして渡し、ブラウザ側で描画する。
+  if (p.html === '1') {
+    try {
+      return ContentService.createTextOutput(fetchAppHtml_())
+        .setMimeType(ContentService.MimeType.TEXT);
+    } catch (err) {
+      return ContentService.createTextOutput('<h2>取得失敗</h2><p>' + String((err && err.message) || err) + '</p>')
+        .setMimeType(ContentService.MimeType.TEXT);
+    }
+  }
+
+  // ── それ以外（パラメータなし）は、小さな「起動ページ」を配信する ──
+  // 起動ページが上記 ?html=1 を取得して document.write で描画する。
+  return bootstrapPage_();
 }
 
-// アプリ本体(HTML)を取得して配信する。Googleサイトに埋め込めるよう iframe を許可する。
-function serveApp_() {
-  try {
-    var html = fetchAppHtml_();
-    return HtmlService.createHtmlOutput(html)
-      .setTitle('出張距離測定・申請ガイド')
-      .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-      .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
-  } catch (err) {
-    var msg = String((err && err.message) || err);
-    return HtmlService.createHtmlOutput(
-      '<div style="font-family:sans-serif;padding:24px;line-height:1.7">' +
-      '<h2>アプリを表示できませんでした</h2>' +
-      '<p>' + msg + '</p>' +
-      '<p>確認：①GitHubリポジトリが <b>Public</b> になっているか ②コード.gs の APP_HTML_URL が正しいか</p>' +
-      '</div>'
-    ).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
-  }
+// 小さな起動ページ。アプリ本体(HTML)をテキストで取得し、ブラウザ自身に描画させる。
+// Apps Script の HTML 配信はこの小さなページだけなので壊れない。
+function bootstrapPage_() {
+  var self = ScriptApp.getService().getUrl();
+  var boot =
+    '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
+    '<style>html,body{margin:0;height:100%;font-family:sans-serif}#msg{padding:20px;color:#555}</style>' +
+    '</head><body><div id="msg">読み込み中…</div>' +
+    '<script>' +
+    'fetch(' + JSON.stringify(self) + ' + "?html=1")' +
+    '.then(function(r){return r.text();})' +
+    '.then(function(t){document.open();document.write(t);document.close();})' +
+    '.catch(function(e){document.getElementById("msg").textContent="読み込みに失敗しました: "+e;});' +
+    '<\/script></body></html>';
+  return HtmlService.createHtmlOutput(boot)
+    .setTitle('出張距離測定・申請ガイド')
+    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
 }
 
 // index.html をネット経由で取得（Googleのサーバーが代行）。10分間キャッシュ。
