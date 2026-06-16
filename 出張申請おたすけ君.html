@@ -1854,6 +1854,7 @@ async function calculateRoute() {
   try {
     const first = await buildPattern('highway', 0);
     let candidates;
+    let nohwTripKm = null; // 高速回避時の総距離（実際に高速を使うか判定する基準）
 
     if (first.estimated) {
       // 直線フォールバック時は候補比較できない（1ルートのみ）
@@ -1865,9 +1866,11 @@ async function calculateRoute() {
         const data = (costing === 'highway' && alt === 0) ? first : await buildPattern(costing, alt);
         candidates.push({ costing, alt, data });
       }
+      const nohw = candidates.find(c => c.costing === 'nohighway');
+      nohwTripKm = nohw ? nohw.data.tripKm : null;
       candidates = dedupeRouteCandidates(candidates);
     }
-    labelCandidates(candidates);
+    labelCandidates(candidates, nohwTripKm);
 
     // 推定（直線フォールバック）時は決定済み扱い。実ルートは必ず「決定」を押してもらう
     const isEstimated = candidates.length === 1 && candidates[0].data.estimated;
@@ -1907,18 +1910,29 @@ function dedupeRouteCandidates(list) {
   return out;
 }
 
-function labelCandidates(list) {
-  const baseLabel = costing => costing === 'highway' ? '高速道路を使うルート' : '一般道のみのルート';
+// 候補を「実際に高速を使うか／有料か」で分類してラベル付けする。
+// nohwTripKm（高速回避時の総距離）と比べ、距離が大きく変わる or 有料なら高速利用とみなす。
+function labelCandidates(list, nohwTripKm) {
+  const classify = c => {
+    const d = c.data;
+    if (d.estimated) return { usesHwy: false, base: '推定ルート（直線）' };
+    const usesHwy = d.hasToll ||
+      (c.costing === 'highway' && nohwTripKm != null && Math.abs(d.tripKm - nohwTripKm) > 0.15);
+    if (usesHwy) return { usesHwy: true, base: d.hasToll ? '高速道路を使う（有料）' : '高速道路を使う（無料）' };
+    return { usesHwy: false, base: '一般道（高速は使いません）' };
+  };
+  const infos = list.map(classify);
   const counts = {};
-  list.forEach(c => { counts[c.costing] = (counts[c.costing] || 0) + 1; });
+  infos.forEach(info => { counts[info.base] = (counts[info.base] || 0) + 1; });
   const seen = {};
-  list.forEach(c => {
-    const base = baseLabel(c.costing);
-    if (counts[c.costing] > 1) {
-      seen[c.costing] = (seen[c.costing] || 0) + 1;
-      c.label = `${base}（候補${seen[c.costing]}）`;
+  list.forEach((c, i) => {
+    const info = infos[i];
+    c.usesHwy = info.usesHwy;
+    if (counts[info.base] > 1) {
+      seen[info.base] = (seen[info.base] || 0) + 1;
+      c.label = `${info.base}（候補${seen[info.base]}）`;
     } else {
-      c.label = base;
+      c.label = info.base;
     }
   });
 }
@@ -2095,7 +2109,7 @@ function renderCandidates() {
     const cards = c.candidates.map((cand, i) => {
       const cd = cand.data;
       const active = c.active === i ? ' active' : '';
-      const icon = cand.costing === 'highway' ? '⚡' : '🚗';
+      const icon = cand.usesHwy ? '⚡' : '🚗';
       const toll = cd.hasToll
         ? '<span class="rc-toll">有料道路あり</span>'
         : '<span class="rc-free">通行料なし</span>';
