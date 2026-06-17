@@ -1252,40 +1252,28 @@ async function setupCommute() {
   showLoading(true, '通勤ルートを検索中…');
   try {
     routeCache.clear();
-    const hwVariants = [];   // 高速を許可したルート（代替含む）
-    const nohwVariants = []; // 高速を回避したルート
-    try { (await gasFetchRoutes([locations.home, locations.school], 'highway', true)).forEach(v => hwVariants.push(v)); } catch (e) { console.warn('[通勤 highway]', e.message); }
-    try { (await gasFetchRoutes([locations.home, locations.school], 'nohighway', false)).forEach(v => nohwVariants.push(v)); } catch (e) { console.warn('[通勤 nohighway]', e.message); }
+    const variants = [];
+    // 高速ありルート（代替含む）と高速回避ルートを集める
+    try { (await gasFetchRoutes([locations.home, locations.school], 'highway', true)).forEach(v => variants.push(v)); } catch (e) { console.warn('[通勤 highway]', e.message); }
+    try { (await gasFetchRoutes([locations.home, locations.school], 'nohighway', false)).forEach(v => variants.push(v)); } catch (e) { console.warn('[通勤 nohighway]', e.message); }
 
-    // 高速を回避したときの距離。これと比べて、高速許可ルートが「本当に高速に乗るか」を判定する。
-    const nohwDist = nohwVariants.length ? nohwVariants[0].distance : null;
-
-    const all = [];
-    hwVariants.forEach(v => {
-      // 有料 or「高速を避けると距離が大きく変わる」＝実際に高速（自動車専用道）を使っている
-      const usesHwy = v.hasToll || (nohwDist != null && Math.abs(v.distance - nohwDist) > 150);
-      all.push({ ...v, kind: usesHwy ? 'highway' : 'general' });
-    });
-    nohwVariants.forEach(v => all.push({ ...v, kind: 'general' }));
-
-    if (!all.length) {
+    if (!variants.length) {
       // GASに繋がらないときは直線で確定（推定）
       const d = haversineDistance(locations.home, locations.school) * 1.3;
-      all.push({ distance: d, duration: 0, geometry: straightLineGeometry(locations.home, locations.school), hasToll: false, method: 'straight', kind: 'straight' });
+      variants.push({ distance: d, duration: 0, geometry: straightLineGeometry(locations.home, locations.school), hasToll: false, summary: '', method: 'straight' });
     }
 
-    // 距離が近い候補は重複として除去（高速を使わない高速許可ルートと、高速回避ルートは同じになる）
+    // 距離が近い候補は重複として除去し、距離の短い順に並べる
     const uniq = [];
-    all.forEach(v => {
+    variants.forEach(v => {
       if (!uniq.some(u => Math.abs(u.distance - v.distance) < 150)) uniq.push(v);
     });
-    // 分かりやすさのため「高速を使う」候補を上に
-    uniq.sort((a, b) => (a.kind === 'highway' ? 0 : 1) - (b.kind === 'highway' ? 0 : 1));
+    uniq.sort((a, b) => a.distance - b.distance);
     window._commuteVariants = uniq;
 
     choicesEl.innerHTML = '<div style="font-size:12px;font-weight:600;color:#1a73e8;margin:8px 0 6px;">いつも使う通勤ルートを選んでください：</div>' +
       uniq.map((v, i) => {
-        const lab = commuteRouteLabel(v);
+        const lab = commuteRouteLabel(v, i === 0);
         return `<div class="location-card" style="cursor:pointer;" onmouseover="previewCommuteVariant(${i})" onclick="chooseCommute(${i})">
           <div style="display:flex;justify-content:space-between;align-items:center;">
             <span style="font-weight:600;">${lab.icon} ${lab.title}</span>
@@ -1311,17 +1299,19 @@ async function setupCommute() {
   }
 }
 
-// 通勤ルート候補のラベル。実際に高速に乗るか／有料かを区別して表示する。
-function commuteRouteLabel(v) {
+// 通勤ルート候補のラベル。経由する主要道路名（summary）と、有料かどうかで表示する。
+// （Googleの無料APIでは「高速を使うか」を確実には判定できないため、事実ベースの情報のみ表示）
+function commuteRouteLabel(v, isShortest) {
   if (v.method === 'straight') {
     return { icon: '📏', title: '推定ルート（直線）', tag: '<span style="color:#e65100;font-weight:600;font-size:11px;">概算</span>', note: 'ルート検索に接続できず、直線距離からの概算です。' };
   }
-  if (v.kind === 'highway') {
-    return v.hasToll
-      ? { icon: '⚡', title: '高速道路を使う', tag: '<span style="color:#c62828;font-weight:600;font-size:11px;">有料</span>', note: '料金のかかる高速道路を通ります。' }
-      : { icon: '⚡', title: '高速道路を使う（無料）', tag: '<span style="color:#1565c0;font-weight:600;font-size:11px;">無料の自動車専用道路</span>', note: '通行料は不要ですが、自動車専用道路（高速規格の道）を通ります。' };
-  }
-  return { icon: '🚗', title: '一般道（高速は使いません）', tag: '<span style="color:#2e7d32;font-weight:600;font-size:11px;">通行料なし</span>', note: '高速道路には乗らず、下道（一般道）を通ります。' };
+  const title = v.summary ? `${v.summary} 経由` : (isShortest ? '最短ルート' : '別ルート');
+  const icon = v.hasToll ? '⚡' : '🚗';
+  const tag = v.hasToll
+    ? '<span style="color:#c62828;font-weight:600;font-size:11px;">有料道路あり</span>'
+    : '<span style="color:#2e7d32;font-weight:600;font-size:11px;">通行料なし</span>';
+  const note = v.hasToll ? '料金のかかる道路を含みます。' : '';
+  return { icon, title, tag, note };
 }
 
 // 候補を地図上にプレビュー表示
@@ -1508,6 +1498,7 @@ async function gasFetchRoutes(points, costing, wantAlternatives) {
     duration: r.duration,                       // 秒
     geometry: polylineToGeoJSON(r.polyline),    // GeoJSON LineString（[lng,lat]）
     hasToll: !!r.hasToll,
+    summary: r.summary || '',                   // 主要経由道路名（例：九州自動車道 / 国道3号）
     method: 'google'
   }));
 }
@@ -1854,7 +1845,6 @@ async function calculateRoute() {
   try {
     const first = await buildPattern('highway', 0);
     let candidates;
-    let nohwTripKm = null; // 高速回避時の総距離（実際に高速を使うか判定する基準）
 
     if (first.estimated) {
       // 直線フォールバック時は候補比較できない（1ルートのみ）
@@ -1866,11 +1856,9 @@ async function calculateRoute() {
         const data = (costing === 'highway' && alt === 0) ? first : await buildPattern(costing, alt);
         candidates.push({ costing, alt, data });
       }
-      const nohw = candidates.find(c => c.costing === 'nohighway');
-      nohwTripKm = nohw ? nohw.data.tripKm : null;
       candidates = dedupeRouteCandidates(candidates);
     }
-    labelCandidates(candidates, nohwTripKm);
+    labelCandidates(candidates);
 
     // 推定（直線フォールバック）時は決定済み扱い。実ルートは必ず「決定」を押してもらう
     const isEstimated = candidates.length === 1 && candidates[0].data.estimated;
@@ -1910,29 +1898,26 @@ function dedupeRouteCandidates(list) {
   return out;
 }
 
-// 候補を「実際に高速を使うか／有料か」で分類してラベル付けする。
-// nohwTripKm（高速回避時の総距離）と比べ、距離が大きく変わる or 有料なら高速利用とみなす。
-function labelCandidates(list, nohwTripKm) {
+// 候補を「有料かどうか」で分類してラベル付けする（確実に分かる情報のみ）。
+// 距離・所要時間はカードに別途表示されるので、それで各ルートを見分けてもらう。
+function labelCandidates(list) {
   const classify = c => {
     const d = c.data;
-    if (d.estimated) return { usesHwy: false, base: '推定ルート（直線）' };
-    const usesHwy = d.hasToll ||
-      (c.costing === 'highway' && nohwTripKm != null && Math.abs(d.tripKm - nohwTripKm) > 0.15);
-    if (usesHwy) return { usesHwy: true, base: d.hasToll ? '高速道路を使う（有料）' : '高速道路を使う（無料）' };
-    return { usesHwy: false, base: '一般道（高速は使いません）' };
+    if (d.estimated) return '推定ルート（直線）';
+    return d.hasToll ? '有料道路をふくむルート' : '通行料なしのルート';
   };
-  const infos = list.map(classify);
+  const bases = list.map(classify);
   const counts = {};
-  infos.forEach(info => { counts[info.base] = (counts[info.base] || 0) + 1; });
+  bases.forEach(b => { counts[b] = (counts[b] || 0) + 1; });
   const seen = {};
   list.forEach((c, i) => {
-    const info = infos[i];
-    c.usesHwy = info.usesHwy;
-    if (counts[info.base] > 1) {
-      seen[info.base] = (seen[info.base] || 0) + 1;
-      c.label = `${info.base}（候補${seen[info.base]}）`;
+    const base = bases[i];
+    c.usesHwy = !!c.data.hasToll; // アイコン用（有料=⚡）
+    if (counts[base] > 1) {
+      seen[base] = (seen[base] || 0) + 1;
+      c.label = `${base}（候補${seen[base]}）`;
     } else {
-      c.label = info.base;
+      c.label = base;
     }
   });
 }
