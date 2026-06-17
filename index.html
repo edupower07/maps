@@ -760,6 +760,10 @@ const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyzE_RzZqLbA5_z4AaA
 // 確定・保存された通勤ルート（自宅↔学校）。{ home, school, geometry, distanceKm, method }
 let savedCommute = JSON.parse(localStorage.getItem('commute-route') || 'null');
 let commutePreviewLayer = null;   // 地図上に常時表示する通勤ルートのプレビュー
+let commutePreviewIndex = 0;      // 候補のうち現在プレビュー中のもの
+let commuteEditMode = false;      // 通勤ルートを経由地で手動調整するモード
+let commuteEdit = null;           // { vias:[{lat,lng}], costing, route }
+let commuteViaMarkers = [];       // 手動調整中の経由地マーカー
 
 // 初期登録する用務地（初回起動時にブラウザ側でジオコーディングして保存）
 const DEFAULT_DESTS = [
@@ -793,6 +797,7 @@ renderCommuteStatus();
 drawCommutePreview();
 
 map.on('click', function(e) {
+  if (commuteEditMode) { addCommuteVia(e.latlng); return; }
   if (editMode) { addViaPoint(e.latlng); return; }
   if (!mapClickTarget) return;
   setLocation(mapClickTarget, e.latlng.lat, e.latlng.lng);
@@ -1228,6 +1233,7 @@ function renderCommuteStatus() {
            <div style="font-weight:700;color:#1b5e20;">✅ 通勤ルート確定済み</div>
            <div class="result-row"><span>通勤距離（自宅↔学校）</span><span class="val">${savedCommute.distanceKm.toFixed(1)} km</span></div>
            <div style="font-size:12px;color:#555;margin-top:4px;">この通勤ルートを基準に、出張ルートとの重複区間を判定します。</div>
+           <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" onclick="enterCommuteEditFromSaved()">🖊 このルートを手動で調整する</button>
          </div>`;
     btn.textContent = outdated ? '🛣 通勤ルートを再設定する' : '🛣 通勤ルートを設定し直す';
     btn.className = outdated ? 'btn btn-primary' : 'btn btn-secondary';
@@ -1283,14 +1289,10 @@ async function setupCommute() {
           ${lab.note ? `<div style="font-size:10.5px;color:#888;margin-top:3px;">${lab.note}</div>` : ''}
         </div>`;
       }).join('') +
-      '<div style="font-size:11px;color:#999;margin:4px 0 6px;">候補にマウスを乗せると地図で確認できます。クリックで確定します。</div>';
+      '<div style="font-size:11px;color:#999;margin:4px 0 6px;">候補にマウスを乗せると地図で確認できます。クリックで確定します。</div>' +
+      '<button class="btn btn-secondary btn-sm" style="width:100%;margin-top:2px;" onclick="enterCommuteEditFromVariant()">🖊 提案にないルートを手動で作る・調整する</button>';
 
-    if (uniq.length === 1) {
-      // 候補が1本だけならそのまま確定
-      chooseCommute(0);
-    } else {
-      previewCommuteVariant(0);
-    }
+    previewCommuteVariant(0);
   } catch (e) {
     console.error('[通勤ルート設定エラー]', e);
     showToast('通勤ルートの取得に失敗しました: ' + e.message);
@@ -1318,9 +1320,143 @@ function commuteRouteLabel(v, isShortest) {
 function previewCommuteVariant(i) {
   const v = window._commuteVariants && window._commuteVariants[i];
   if (!v) return;
+  commutePreviewIndex = i;
   if (commutePreviewLayer) { map.removeLayer(commutePreviewLayer); commutePreviewLayer = null; }
   commutePreviewLayer = L.geoJSON(v.geometry, { style: { color: '#9e9e9e', weight: 5, opacity: 0.9 } }).addTo(map);
   try { map.fitBounds(commutePreviewLayer.getBounds(), { padding: [50, 50] }); } catch {}
+}
+
+// ===== 通勤ルートの手動調整（経由地で実際に通る道に合わせる） =====
+
+// プレビュー中の候補をベースに手動調整を開始
+function enterCommuteEditFromVariant() {
+  const v = (window._commuteVariants || [])[commutePreviewIndex];
+  enterCommuteEdit(v ? { geometry: v.geometry, distance: v.distance, duration: v.duration, hasToll: v.hasToll, summary: v.summary, method: v.method } : null);
+}
+
+// 確定済みの通勤ルートをベースに手動調整を開始
+function enterCommuteEditFromSaved() {
+  if (!savedCommute) return;
+  enterCommuteEdit({ geometry: savedCommute.geometry, distance: savedCommute.distanceKm * 1000, duration: 0, hasToll: false, summary: '', method: savedCommute.method });
+}
+
+function enterCommuteEdit(baseRoute) {
+  if (!locations.home || !locations.school) { showToast('自宅と勤務場所（学校）を登録してください'); return; }
+  commuteEdit = { vias: [], costing: 'highway', route: baseRoute || null };
+  commuteEditMode = true;
+  map.getContainer().style.cursor = 'crosshair';
+  renderCommuteEditPanel();
+  drawCommuteEditPreview();
+  try { if (commutePreviewLayer) map.fitBounds(commutePreviewLayer.getBounds(), { padding: [50, 50] }); } catch {}
+  showToast('地図をクリックして、実際に通る道（経由地）を指定してください');
+}
+
+async function addCommuteVia(latlng) {
+  if (!commuteEdit) return;
+  commuteEdit.vias.push({ lat: latlng.lat, lng: latlng.lng });
+  await recomputeCommuteEdit();
+}
+
+async function clearCommuteVias() {
+  if (!commuteEdit) return;
+  commuteEdit.vias = [];
+  await recomputeCommuteEdit();
+}
+
+async function recomputeCommuteEdit() {
+  if (!commuteEdit) return;
+  showLoading(true, 'ルート再計算中…');
+  try {
+    const points = [locations.home, ...commuteEdit.vias, locations.school];
+    commuteEdit.route = await getRouteVia(points, commuteEdit.costing, 0);
+  } catch (e) {
+    console.error('[通勤手動調整]', e);
+    showToast('再計算に失敗しました: ' + e.message);
+  } finally {
+    showLoading(false);
+  }
+  renderCommuteEditPanel();
+  drawCommuteEditPreview();
+}
+
+function clearCommuteViaMarkers() {
+  commuteViaMarkers.forEach(m => { try { map.removeLayer(m); } catch {} });
+  commuteViaMarkers = [];
+}
+
+function drawCommuteEditPreview() {
+  clearCommutePreview();
+  clearCommuteViaMarkers();
+  const r = commuteEdit && commuteEdit.route;
+  if (r && r.geometry) {
+    commutePreviewLayer = L.geoJSON(r.geometry, { style: { color: '#9e9e9e', weight: 5, opacity: 0.9 } }).addTo(map);
+  }
+  if (!commuteEdit) return;
+  commuteEdit.vias.forEach((v, idx) => {
+    const mk = L.marker([v.lat, v.lng], { draggable: true, icon: viaIcon(idx) }).addTo(map);
+    mk.on('dragend', async () => { const ll = mk.getLatLng(); commuteEdit.vias[idx] = { lat: ll.lat, lng: ll.lng }; await recomputeCommuteEdit(); });
+    mk.on('click', async (ev) => { L.DomEvent.stop(ev); commuteEdit.vias.splice(idx, 1); await recomputeCommuteEdit(); });
+    commuteViaMarkers.push(mk);
+  });
+}
+
+function renderCommuteEditPanel() {
+  const el = document.getElementById('commute-choices');
+  if (!el) return;
+  const r = commuteEdit && commuteEdit.route;
+  const km = r ? (r.distance / 1000).toFixed(1) : '–';
+  const min = r ? Math.round((r.duration || 0) / 60) : '–';
+  const toll = r && r.hasToll ? '⚡ 有料道路あり' : '🚗 通行料なし';
+  const nVias = commuteEdit ? commuteEdit.vias.length : 0;
+  el.innerHTML = `
+    <div class="route-compare show" style="margin-top:8px;">
+      <div class="rc-tools">
+        <div class="rc-tool-title">🖊 通勤ルートを手動で調整中</div>
+        <div class="rc-tool-note">地図をクリックして、実際に通る道に経由地を足してください。マーカーはドラッグで移動、クリックで削除できます。</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 2px;">
+          <span style="font-weight:600;">調整後の距離</span>
+          <span style="font-weight:700;color:#1b5e20;">${km} km</span>
+        </div>
+        <div style="font-size:11px;color:#666;margin-bottom:8px;">約 ${min} 分　${toll}　経由地 ${nVias} 箇所</div>
+        <div class="rc-edit-actions">
+          <button class="rc-mini" onclick="clearCommuteVias()">経由地をクリア</button>
+          <button class="rc-mini" onclick="cancelCommuteEdit()">やめる</button>
+        </div>
+        <button class="rc-decide" style="margin-top:8px;" onclick="saveCommuteEdited()">✅ この調整したルートで確定</button>
+      </div>
+    </div>`;
+}
+
+function saveCommuteEdited() {
+  const r = commuteEdit && commuteEdit.route;
+  if (!r || !r.geometry) { showToast('先にルートを作成してください'); return; }
+  savedCommute = {
+    home: { lat: locations.home.lat, lng: locations.home.lng },
+    school: { lat: locations.school.lat, lng: locations.school.lng },
+    geometry: r.geometry,
+    distanceKm: r.distance / 1000,
+    method: r.method || 'google'
+  };
+  localStorage.setItem('commute-route', JSON.stringify(savedCommute));
+  exitCommuteEdit();
+  document.getElementById('commute-choices').innerHTML = '';
+  renderCommuteStatus();
+  drawCommutePreview();
+  showToast(`通勤ルートを確定しました（${savedCommute.distanceKm.toFixed(1)} km）`);
+}
+
+function cancelCommuteEdit() {
+  exitCommuteEdit();
+  document.getElementById('commute-choices').innerHTML = '';
+  drawCommutePreview();
+  showToast('手動調整をやめました');
+}
+
+function exitCommuteEdit() {
+  commuteEditMode = false;
+  commuteEdit = null;
+  if (map) map.getContainer().style.cursor = '';
+  clearCommuteViaMarkers();
 }
 
 // 選んだ候補を通勤ルートとして確定・保存
