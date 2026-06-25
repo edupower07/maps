@@ -1841,8 +1841,6 @@ function recomputeData(data) {
     leg.overlaps.forEach(o => { if (o.enabled) ov += o.km; });
     return Math.max(0, leg.km - ov);
   });
-  // 申請の「用件」欄にそのまま貼れるテキスト（例：順路1.5km、3.2km）
-  const claimText = '順路' + legClaims.map(k => k.toFixed(1) + 'km').join('、');
 
   // 結果表示：区間ごとに 実測 →（重複を除算）→ 申請距離 を出す
   const legRole = i => i === 0 ? '行き' : (i === legs.length - 1 ? '帰り' : `経由${i}`);
@@ -1873,7 +1871,7 @@ function recomputeData(data) {
   });
 
   Object.assign(data, {
-    tripKm, totalOverlap, totalClaim, legClaims, claimText,
+    tripKm, totalOverlap, totalClaim, legClaims,
     durationMin: Math.round(durationSec / 60),
     hasToll, estimated, results, drawLayers, overlapSegmentsList,
     printMaps: composePrintMaps(data)
@@ -2026,7 +2024,8 @@ async function calculateRoute() {
       candidates,
       canCompare: candidates.length > 1,
       active: 0,
-      decided: isEstimated
+      decided: isEstimated,
+      reason: ''   // 出張理由（用件欄テキストに使う）
     };
 
     renderCandidates();
@@ -2333,14 +2332,17 @@ function renderResult() {
     `<div class="result-row"><span${r.strong ? ' style="font-weight:600;color:#1b5e20;"' : ''}>${r.label}</span><span class="val"${r.strong ? ' style="font-size:15px;"' : ''}>${r.value}</span></div>`
   ).join('');
 
-  // 申請の「用件」欄にそのまま貼れるコピー用テキスト（行き・帰りの除算済み距離）
+  // 申請の「用件」欄にそのまま貼れるコピー用テキスト（出張理由＋順路＋直行/直帰）
+  const reasonVal = (c.reason || '').replace(/"/g, '&quot;');
   html += `<div style="margin-top:10px;padding:10px;border:2px dashed #1a73e8;border-radius:8px;background:#f5f9ff;">
-      <div style="font-size:12px;color:#1a73e8;font-weight:600;margin-bottom:6px;">📋 以下をコピーして申請の「用件」欄にペースト</div>
-      <div style="display:flex;gap:8px;align-items:center;">
-        <input id="claim-text" readonly value="${d.claimText}" style="flex:1;min-width:0;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:15px;font-weight:700;color:#1b5e20;background:#fff;">
+      <div style="font-size:12px;color:#1a73e8;font-weight:600;margin-bottom:6px;">📋 申請の「用件」欄に貼り付ける文章</div>
+      <input id="trip-reason" placeholder="出張の理由（例：○○会議、△△研究会参加のため）" value="${reasonVal}" oninput="onReasonInput(this.value)"
+        style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:14px;margin-bottom:8px;">
+      <div style="display:flex;gap:8px;align-items:flex-start;">
+        <textarea id="claim-text" readonly rows="2" style="flex:1;min-width:0;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:14px;font-weight:700;color:#1b5e20;background:#fff;resize:none;">${buildYoukenText(c, d)}</textarea>
         <button class="btn btn-primary btn-sm" style="white-space:nowrap;" onclick="copyClaimText()">📋 コピー</button>
       </div>
-      <div style="font-size:11px;color:#888;margin-top:5px;">行き・帰りそれぞれの「除算済み」距離です。</div>
+      <div style="font-size:11px;color:#888;margin-top:5px;">出張理由を入れると用件欄の文章が完成します。${chokkouLabel(c.pattern) ? '自宅発着なので「' + chokkouLabel(c.pattern) + '」と自宅住所も自動で付きます。' : ''}</div>
     </div>`;
 
   if (d.estimated) {
@@ -2360,12 +2362,44 @@ function renderResult() {
   document.getElementById('route-legend').classList.add('show');
 }
 
+// 半角数字 → 全角数字（用件欄の例に合わせる）
+function zen(n) {
+  return String(n).replace(/[0-9]/g, ch => '０１２３４５６７８９'[ch]);
+}
+
+// パターンから 自宅発着の区分（直行/直帰/直行直帰）を返す。学校発着(①)は空。
+function chokkouLabel(pattern) {
+  return pattern === 2 ? '直行' : pattern === 3 ? '直帰' : pattern === 4 ? '直行直帰' : '';
+}
+
+// 校務支援システムの「用件」欄に貼る文章を組み立てる。
+// 例：○○会議（順路１：1.5km、２：3.2km） ※直行（●●区△△）
+function buildYoukenText(c, d) {
+  const reason = (c.reason || '').trim();
+  const junro = '順路' + d.legClaims.map((k, i) => `${zen(i + 1)}：${k.toFixed(1)}km`).join('、');
+  let text = reason ? `${reason}（${junro}）` : `（${junro}）`;
+  const chokkou = chokkouLabel(c.pattern);
+  if (chokkou) {
+    const homeAddr = (locations.home && locations.home.name) ? locations.home.name : '';
+    text += ` ※${chokkou}` + (homeAddr ? `（${homeAddr}）` : '');
+  }
+  return text;
+}
+
+// 出張理由が入力されたら、用件テキストを作り直す
+function onReasonInput(val) {
+  if (!lastCalc) return;
+  lastCalc.reason = val;
+  const el = document.getElementById('claim-text');
+  if (el) el.value = buildYoukenText(lastCalc, activeData());
+}
+
 // コピー用テキストをクリップボードへ
 function copyClaimText() {
   const el = document.getElementById('claim-text');
   if (!el) return;
   const text = el.value;
-  const done = () => showToast('コピーしました：' + text);
+  const done = () => showToast('コピーしました');
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopyInput(el, done));
   } else {
@@ -2392,7 +2426,7 @@ function buildSuggestion(c, d) {
   return `
     <h4>📝 申請のしかた（パターン${c.pattern}：${c.patternName}）</h4>
     <ol style="margin-left:16px; margin-top:6px;">
-      <li>校務支援システムの出張申請の「用件」欄に <strong style="color:#1b5e20;">${d.claimText}</strong> を入力する（行き・帰りの除算済み距離。上の📋ボタンでコピーできます）。</li>
+      <li>校務支援システムの出張申請の「用件」欄に <strong style="color:#1b5e20;">${buildYoukenText(c, d)}</strong> を入力する（上の📋ボタンでそのままコピーできます）。</li>
       ${routeLine}
       ${dedu}
       <li>「出張・研修命令書」を印刷する。</li>
@@ -2441,7 +2475,7 @@ async function openPrintMaps() {
       <tr><td>出張パターン</td><td>パターン${c.pattern}：${c.patternName}</td></tr>
       ${c.canCompare ? `<tr><td>選んだルート</td><td>${activeCand().label}（約${d.durationMin}分${d.hasToll ? '・有料道路あり' : ''}）</td></tr>` : ''}
       ${d.results.map(r => `<tr><td>${r.label}</td><td>${r.value}</td></tr>`).join('')}
-      <tr class="total"><td>申請（用件欄）</td><td>${d.claimText}</td></tr>
+      <tr class="total"><td>用件欄に入力</td><td>${buildYoukenText(c, d)}</td></tr>
       <tr><td>申請距離（合計）</td><td>${d.totalClaim.toFixed(1)} km</td></tr>
       <tr><td>測定日</td><td>${c.date}</td></tr>
     </table>
