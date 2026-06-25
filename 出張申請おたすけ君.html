@@ -1835,10 +1835,31 @@ function recomputeData(data) {
   if (commuteRoute && commuteRoute.method === 'straight') estimated = true;
   const totalClaim = Math.max(0, tripKm - totalOverlap);
 
-  const results = legs.map(leg => ({ label: leg.screenLabel, value: `${leg.km.toFixed(1)} km` }));
+  // 区間（行き／帰り）ごとの「除算済み（申請）距離」を計算
+  const legClaims = legs.map(leg => {
+    let ov = 0;
+    leg.overlaps.forEach(o => { if (o.enabled) ov += o.km; });
+    return Math.max(0, leg.km - ov);
+  });
+  // 申請の「用件」欄にそのまま貼れるテキスト（例：順路1.5km、3.2km）
+  const claimText = '順路' + legClaims.map(k => k.toFixed(1) + 'km').join('、');
+
+  // 結果表示：区間ごとに 実測 →（重複を除算）→ 申請距離 を出す
+  const legRole = i => i === 0 ? '行き' : (i === legs.length - 1 ? '帰り' : `経由${i}`);
+  const results = [];
+  legs.forEach((leg, i) => {
+    let ov = 0;
+    leg.overlaps.forEach(o => { if (o.enabled) ov += o.km; });
+    if (ov > 0.05) {
+      results.push({ label: `${legRole(i)}：${leg.screenLabel}（実測）`, value: `${leg.km.toFixed(1)} km` });
+      results.push({ label: '　└ 重複を除算', value: `−${ov.toFixed(1)} km` });
+      results.push({ label: '　└ 申請距離', value: `${legClaims[i].toFixed(1)} km`, strong: true });
+    } else {
+      results.push({ label: `${legRole(i)}：${leg.screenLabel}`, value: `${legClaims[i].toFixed(1)} km`, strong: true });
+    }
+  });
   if (plan.hasCommute) {
-    results.push({ label: '通勤経路（自宅↔学校）', value: `${dc.toFixed(1)} km` });
-    results.push({ label: '⚠ 重複区間（除算）', value: `-${totalOverlap.toFixed(1)} km` });
+    results.push({ label: '（参考）通勤経路 自宅↔学校', value: `${dc.toFixed(1)} km` });
   }
 
   const drawLayers = [];
@@ -1852,7 +1873,7 @@ function recomputeData(data) {
   });
 
   Object.assign(data, {
-    tripKm, totalOverlap, totalClaim,
+    tripKm, totalOverlap, totalClaim, legClaims, claimText,
     durationMin: Math.round(durationSec / 60),
     hasToll, estimated, results, drawLayers, overlapSegmentsList,
     printMaps: composePrintMaps(data)
@@ -2309,8 +2330,18 @@ function renderResult() {
   const c = lastCalc;
   const d = activeData();
   let html = d.results.map(r =>
-    `<div class="result-row"><span>${r.label}</span><span class="val">${r.value}</span></div>`
+    `<div class="result-row"><span${r.strong ? ' style="font-weight:600;color:#1b5e20;"' : ''}>${r.label}</span><span class="val"${r.strong ? ' style="font-size:15px;"' : ''}>${r.value}</span></div>`
   ).join('');
+
+  // 申請の「用件」欄にそのまま貼れるコピー用テキスト（行き・帰りの除算済み距離）
+  html += `<div style="margin-top:10px;padding:10px;border:2px dashed #1a73e8;border-radius:8px;background:#f5f9ff;">
+      <div style="font-size:12px;color:#1a73e8;font-weight:600;margin-bottom:6px;">📋 以下をコピーして申請の「用件」欄にペースト</div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input id="claim-text" readonly value="${d.claimText}" style="flex:1;min-width:0;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:15px;font-weight:700;color:#1b5e20;background:#fff;">
+        <button class="btn btn-primary btn-sm" style="white-space:nowrap;" onclick="copyClaimText()">📋 コピー</button>
+      </div>
+      <div style="font-size:11px;color:#888;margin-top:5px;">行き・帰りそれぞれの「除算済み」距離です。</div>
+    </div>`;
 
   if (d.estimated) {
     html += `<div style="margin-top:8px;padding:8px;background:#fff3e0;border-radius:6px;font-size:12px;color:#e65100;">
@@ -2323,10 +2354,27 @@ function renderResult() {
   }
 
   document.getElementById('result-details').innerHTML = html;
-  document.getElementById('result-total').textContent = `申請距離: ${d.totalClaim.toFixed(1)} km`;
+  document.getElementById('result-total').textContent = `申請距離（合計）: ${d.totalClaim.toFixed(1)} km`;
   document.getElementById('result-section').style.display = 'block';
   document.getElementById('required-maps').innerHTML = buildSuggestion(c, d);
   document.getElementById('route-legend').classList.add('show');
+}
+
+// コピー用テキストをクリップボードへ
+function copyClaimText() {
+  const el = document.getElementById('claim-text');
+  if (!el) return;
+  const text = el.value;
+  const done = () => showToast('コピーしました：' + text);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done).catch(() => fallbackCopyInput(el, done));
+  } else {
+    fallbackCopyInput(el, done);
+  }
+}
+function fallbackCopyInput(el, done) {
+  try { el.focus(); el.select(); document.execCommand('copy'); done(); }
+  catch { showToast('コピーできませんでした。手動で選択してコピーしてください'); }
 }
 
 function buildSuggestion(c, d) {
@@ -2344,7 +2392,7 @@ function buildSuggestion(c, d) {
   return `
     <h4>📝 申請のしかた（パターン${c.pattern}：${c.patternName}）</h4>
     <ol style="margin-left:16px; margin-top:6px;">
-      <li>校務支援システムの出張申請に、距離 <strong style="color:#1b5e20;">${d.totalClaim.toFixed(1)} km</strong> を入力する。</li>
+      <li>校務支援システムの出張申請の「用件」欄に <strong style="color:#1b5e20;">${d.claimText}</strong> を入力する（行き・帰りの除算済み距離。上の📋ボタンでコピーできます）。</li>
       ${routeLine}
       ${dedu}
       <li>「出張・研修命令書」を印刷する。</li>
@@ -2393,7 +2441,8 @@ async function openPrintMaps() {
       <tr><td>出張パターン</td><td>パターン${c.pattern}：${c.patternName}</td></tr>
       ${c.canCompare ? `<tr><td>選んだルート</td><td>${activeCand().label}（約${d.durationMin}分${d.hasToll ? '・有料道路あり' : ''}）</td></tr>` : ''}
       ${d.results.map(r => `<tr><td>${r.label}</td><td>${r.value}</td></tr>`).join('')}
-      <tr class="total"><td>申請距離</td><td>${d.totalClaim.toFixed(1)} km</td></tr>
+      <tr class="total"><td>申請（用件欄）</td><td>${d.claimText}</td></tr>
+      <tr><td>申請距離（合計）</td><td>${d.totalClaim.toFixed(1)} km</td></tr>
       <tr><td>測定日</td><td>${c.date}</td></tr>
     </table>
     ${d.estimated ? '<p class="est-note">※ ルート検索サーバーに接続できなかったため、直線距離×1.3の推定値です。</p>' : ''}
