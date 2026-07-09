@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>出張距離測定・申請ガイド ─ 使い方マニュアル</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { font-family: 'Yu Gothic', 'Meiryo', 'Hiragino Kaku Gothic ProN', sans-serif; color: #222; line-height: 1.75; font-size: 13.5px; }
+  .page { width: 186mm; margin: 0 auto; padding: 4mm 0 12mm; }
+
+  h1 { font-size: 26px; color: #0d47a1; margin-bottom: 4px; }
+  .subtitle { color: #555; font-size: 14px; margin-bottom: 4px; }
+  .cover { border-bottom: 4px solid #1a73e8; padding-bottom: 14px; margin-bottom: 18px; }
+  .cover .meta { font-size: 12px; color: #888; margin-top: 8px; }
+
+  h2 { font-size: 18px; color: #fff; background: linear-gradient(135deg,#1a73e8,#0d47a1); padding: 7px 12px; border-radius: 6px; margin: 22px 0 12px; }
+  h3 { font-size: 15px; color: #0d47a1; margin: 16px 0 6px; border-left: 5px solid #1a73e8; padding-left: 8px; }
+  p { margin: 6px 0; }
+  ul, ol { margin: 6px 0 10px 22px; }
+  li { margin: 4px 0; }
+
+  .step { display: flex; gap: 10px; margin: 10px 0; align-items: flex-start; }
+  .step .n { flex-shrink: 0; width: 26px; height: 26px; background: #1a73e8; color: #fff; border-radius: 50%; text-align: center; line-height: 26px; font-weight: 700; font-size: 13px; }
+  .step .b { flex: 1; }
+  .step .b b { color: #0d47a1; }
+
+  .box { border: 1px solid #dbe4f3; background: #f5f9ff; border-radius: 8px; padding: 10px 14px; margin: 10px 0; }
+  .tip { border-color: #ffcc80; background: #fff8e1; }
+  .warn { border-color: #ef9a9a; background: #ffebee; }
+  .ok { border-color: #a5d6a7; background: #f1f8e9; }
+  .box .t { font-weight: 700; margin-bottom: 2px; }
+  .tip .t { color: #e65100; }
+  .warn .t { color: #c62828; }
+  .ok .t { color: #2e7d32; }
+  .box.tip .t::before { content: "💡 "; }
+  .box.warn .t::before { content: "⚠ "; }
+  .box.ok .t::before { content: "✅ "; }
+
+  code, .kbd { background: #eef2f9; border: 1px solid #d5deee; border-radius: 4px; padding: 1px 6px; font-family: 'Consolas','Courier New',monospace; font-size: 12.5px; }
+  .sample { background: #1b5e20; color: #fff; border-radius: 6px; padding: 8px 12px; font-weight: 700; display: inline-block; margin: 4px 0; }
+
+  table { border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 12.5px; }
+  th, td { border: 1px solid #c9d4e6; padding: 6px 9px; text-align: left; vertical-align: top; }
+  th { background: #e8f0fe; color: #0d47a1; }
+
+  .toc { border: 1px solid #dbe4f3; border-radius: 8px; padding: 12px 16px; margin: 14px 0 6px; background: #fafcff; }
+  .toc h3 { border: none; padding: 0; margin: 0 0 8px; }
+  .toc ol { margin-left: 20px; }
+  .toc li { margin: 3px 0; }
+
+  .lead { color: #d93025; font-weight: 700; }
+  .muted { color: #777; font-size: 12px; }
+
+  @page { size: A4 portrait; margin: 12mm; }
+  @media print { .page { width: auto; } h2 { -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
+  .pagebreak { page-break-before: always; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <div class="cover">
+    <h1>出張距離測定・申請ガイド</h1>
+    <div class="subtitle">使い方マニュアル（自家用車出張の距離測定・申請サポート）</div>
+    <div class="meta">OpenStreetMap ＋ Googleマップ（Apps Script）利用 ／ APIキー・課金不要</div>
+  </div>
+
+  <div class="box">
+    このアプリは、<b>自家用車での出張距離を測り、通勤ルートと重なる区間を差し引いて（除算して）</b>、
+    校務支援システムの申請に必要な「順路ごとの距離」と「用件欄の文章」「添付用の地図」を一度に用意するためのものです。
+  </div>
+
+  <div class="toc">
+    <h3>もくじ</h3>
+    <ol>
+      <li>このアプリの考え方（なぜ距離を引くのか）</li>
+      <li>全体の流れ</li>
+      <li>【最初の1回】自宅・勤務地を登録する</li>
+      <li>【最初の1回】通勤ルートを確定する</li>
+      <li>出張先（用務地）を登録する ／ 複数・順番</li>
+      <li>出張パターンを選ぶ</li>
+      <li>距離を計算する ／ ルートを選ぶ</li>
+      <li>重複区間（除算）を確認・調整する</li>
+      <li>ルートを手動で修正する（経由地）</li>
+      <li>申請の「用件」欄の文章をコピーする</li>
+      <li>地図を印刷して提出する</li>
+      <li>保存とデータについて</li>
+      <li>困ったときは（トラブル対処）</li>
+    </ol>
+  </div>
+
+  <h2>1. このアプリの考え方（なぜ距離を引くのか）</h2>
+  <p>
+    通勤手当は「自宅 ↔ 勤務地（学校）」の通勤ルートに対してすでに支給されています。
+    そのため出張のときは、出張ルートのうち<b>通勤ルートと重なっている区間は二重に支給されない</b>よう、距離から差し引きます。
+  </p>
+  <div class="box ok">
+    <div class="t">計算の基本</div>
+    申請する距離 ＝ 出張ルートの距離 −（通勤ルートと重なる区間）
+  </div>
+  <p>このアプリは、出張ルートと通勤ルートを実際の道のりで比べ、重なる区間を自動で見つけて差し引きます。</p>
+
+  <h2>2. 全体の流れ</h2>
+  <table>
+    <tr><th>タイミング</th><th>やること</th></tr>
+    <tr><td><b>最初の1回だけ</b></td><td>① 自宅・勤務地を登録　② 通勤ルートを確定（保存される）</td></tr>
+    <tr><td><b>出張のたび</b></td><td>③ 用務地を登録　④ 訪問順を決める　⑤ パターン選択→距離計算　⑥ ルート決定　⑦ 用件欄テキストをコピー　⑧ 地図を印刷</td></tr>
+  </table>
+  <div class="box tip"><div class="t">ポイント</div>通勤ルートは一度確定すればずっと保存されます。毎回やり直す必要はありません（自宅・学校を変えたときだけ再設定）。</div>
+
+  <h2>3. 【最初の1回】自宅・勤務地を登録する</h2>
+  <div class="step"><div class="n">1</div><div class="b">「📍 距離測定」タブを開きます。</div></div>
+  <div class="step"><div class="n">2</div><div class="b"><b>自宅</b>の欄に住所や施設名を入力して「検索」。候補が出たら選びます。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">同じように<b>勤務場所（学校）</b>も登録します。</div></div>
+  <div class="box tip"><div class="t">うまく見つからないとき</div>「🗺 地図で指定」を押し、地図上の正しい場所をクリックすると直接登録できます。施設名より<b>住所での検索</b>のほうが正確に出ます。</div>
+
+  <h2>4. 【最初の1回】通勤ルートを確定する</h2>
+  <p>「🛣 通勤ルート（初期設定）」で、いつもの通勤ルートを1本だけ決めて保存します。</p>
+  <div class="step"><div class="n">1</div><div class="b">自宅と学校が登録済みの状態で「<b>🛣 通勤ルートを確定する</b>」を押します。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">候補が出ます。各候補には<b>経由する主な道路名（例：国道3号 経由）</b>と「有料 / 通行料なし」が表示されます。マウスを乗せると地図で確認できます。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">いつも使うルートを<b>クリックして確定</b>します。「✅ 通勤ルート確定済み」と表示されれば完了です。</div></div>
+  <div class="box"><div class="t">提案されたルートと実際が違うとき</div>
+    「<b>🖊 手動で調整する</b>」を押し、地図をクリックして<b>実際に通る道に経由地を足します</b>。
+    マーカーはドラッグで移動、クリックで削除できます。調整後「✅ この調整したルートで確定」で保存します。
+  </div>
+  <div class="box warn"><div class="t">自宅・学校を変えたら</div>位置が変わると「通勤ルートを再設定してください」と表示されます。もう一度確定し直してください。</div>
+
+  <div class="pagebreak"></div>
+  <h2>5. 出張先（用務地）を登録する ／ 複数・順番</h2>
+  <p>用務地は<b>いくつでも</b>登録できます。上から並んだ順が「回る順番」です。</p>
+  <div class="step"><div class="n">1</div><div class="b">「用務地（出張先）」で住所・施設名を入力して「追加」。または「🗺 地図で追加」でクリック登録。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">登録すると番号付き（①②③）でリストと地図に表示されます。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">順番の変更：各行の <b>▲▼</b> で上下に移動。<b>✕</b> で削除、<b>⭐</b> でよく使う用務地として保存できます。</div></div>
+  <div class="step"><div class="n">4</div><div class="b">「<b>🔀 最短の順に並べ替え</b>」を押すと、回ると最短になる順に自動で並べ替えます（2か所以上で表示）。</div></div>
+  <div class="box tip"><div class="t">よく使う用務地</div>⭐で保存した用務地は「保存済み用務地」に並び、<b>➕</b>でワンタップ追加できます。</div>
+
+  <h2>6. 出張パターンを選ぶ</h2>
+  <p>出発地と帰着地の組み合わせを選びます。除算の有無が変わります。</p>
+  <table>
+    <tr><th>パターン</th><th>経路</th><th>通勤分の除算</th></tr>
+    <tr><td>①</td><td>学校 → 用務地 → 学校</td><td>除算なし</td></tr>
+    <tr><td>②</td><td>自宅 → 用務地 → 学校</td><td>行きの通勤重複を除算（直行）</td></tr>
+    <tr><td>③</td><td>学校 → 用務地 → 自宅</td><td>帰りの通勤重複を除算（直帰）</td></tr>
+    <tr><td>④</td><td>自宅 → 用務地 → 自宅</td><td>行き帰りの通勤重複を除算（直行直帰）</td></tr>
+  </table>
+  <p class="muted">用務地が複数あるときは、選んだパターンの出発地→用務地1→用務地2→…→帰着地の順で計算します。</p>
+
+  <h2>7. 距離を計算する ／ ルートを選ぶ</h2>
+  <div class="step"><div class="n">1</div><div class="b">「<b>🔄 距離を計算する</b>」を押します。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">複数のルート候補が出たら選びます。各カードに<b>距離・所要時間・有料/通行料なし</b>が出ます。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">使うルートを選んだら「<b>✅ このルートで決定して印刷へ</b>」を押します。</div></div>
+  <div class="box warn"><div class="t">「決定」しないと印刷できません</div>ルートを決定してから印刷ボタンを押してください。</div>
+
+  <h2>8. 重複区間（除算）を確認・調整する</h2>
+  <p>通勤ルートと重なる区間は、地図上に<b>黄＋赤のライン</b>で強調され、その分が自動で差し引かれます。</p>
+  <ul>
+    <li>実際と違うときは「✂ 重複区間（除算）の調整」で、各区間を<b>「除外する / しない」</b>に切り替えられます。</li>
+    <li>切り替えると、申請距離と用件欄テキストが自動で更新されます。</li>
+  </ul>
+
+  <h2>9. ルートを手動で修正する（経由地）</h2>
+  <p>候補に希望の道がないときは、通る道を自分で指定できます。</p>
+  <div class="step"><div class="n">1</div><div class="b">「📍 ルートを手動で修正（経由地）」→「経由地を追加して修正する」。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">修正したい区間を選び、地図をクリックして<b>通したい場所（経由地）</b>を追加します。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">マーカーはドラッグで移動、クリックで削除。「修正を終了」で確定します。</div></div>
+
+  <h2>10. 申請の「用件」欄の文章をコピーする</h2>
+  <p>計算結果に、校務支援システムの<b>用件欄にそのまま貼れる文章</b>が自動で作られます。</p>
+  <div class="step"><div class="n">1</div><div class="b"><b>出張の理由</b>（例：○○会議、△△研究会参加のため）を入力します。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">「📋 コピー」を押して、申請の用件欄に貼り付けます。</div></div>
+  <p>生成される文章の例：</p>
+  <div class="sample">○○会議（順路１：1.5km、２：3.2km） ※直行（●●区△△丁目□□）</div>
+  <ul>
+    <li>順路は<b>行き・帰り（用務地が複数なら区間ごと）の除算済み距離</b>が順番に入ります。</li>
+    <li>自宅発着（②③④）のときは <b>直行／直帰／直行直帰</b> と<b>自宅住所</b>が自動で付きます。</li>
+  </ul>
+
+  <h2>11. 地図を印刷して提出する</h2>
+  <div class="step"><div class="n">1</div><div class="b">ルートを「決定」したあと「<b>🖨 必要な地図をまとめて印刷</b>」を押します。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">通勤ルート・各区間の地図（重複区間を強調）が1つにまとまって印刷されます。PDF保存も可能です。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">印刷した地図と「出張・研修命令書」を合わせて事務室に提出します。</div></div>
+  <div class="box tip"><div class="t">印刷がうまくいかないとき</div>アプリが他のページに埋め込まれている場合、印刷が乱れることがあります。その場合はアプリのURLを<b>直接開いて</b>から印刷してください。</div>
+
+  <h2>12. 保存とデータについて</h2>
+  <ul>
+    <li>自宅・学校・通勤ルート・よく使う用務地は、<b>使っているブラウザ内</b>に保存されます。</li>
+    <li>共有URLをみんなで使っても、<b>保存内容は開いた人ごと（端末ごと）</b>で、他の人には見えません。</li>
+    <li>別のPCやブラウザでは引き継がれません。ブラウザのデータを消去すると保存も消えます。</li>
+  </ul>
+
+  <h2>13. 困ったときは（トラブル対処）</h2>
+  <table>
+    <tr><th>症状</th><th>対処</th></tr>
+    <tr><td>施設名で正しい場所が出ない</td><td>正式名称や住所で検索し直す。または「🗺 地図で指定/追加」で直接クリック。</td></tr>
+    <tr><td>距離が「推定（直線×1.3）」と出る</td><td>ルート検索に接続できていません。通信環境を確認してしばらく後に再計算。</td></tr>
+    <tr><td>「通勤ルートを再設定して」と出る</td><td>自宅か学校の位置が変わっています。通勤ルートを確定し直してください。</td></tr>
+    <tr><td>印刷が乱れる</td><td>アプリのURLを直接開いてから印刷する。</td></tr>
+    <tr><td>用件欄の距離を修正したい</td><td>重複区間の「除外する/しない」やルートの手動修正で調整すると自動反映されます。</td></tr>
+  </table>
+
+  <div class="box ok" style="margin-top:18px;">
+    <div class="t">まとめ</div>
+    最初に「自宅・学校・通勤ルート」を1回だけ設定 → あとは出張のたびに「用務地を追加 → 順番 → 計算 → 決定 → コピー＆印刷」。これだけで申請がぐっと楽になります。
+  </div>
+
+</div>
+</body>
+</html>
