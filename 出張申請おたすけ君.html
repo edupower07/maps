@@ -528,25 +528,21 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
         </div>
       </div>
 
-      <div class="location-card" id="card-dest">
-        <div class="label"><span class="dot" style="background:#fbbc04"></span> 用務地（出張先）</div>
-        <div class="address" id="addr-dest">未登録</div>
-        <div class="coords" id="coords-dest"></div>
+      <div class="location-card" id="card-dests">
+        <div class="label"><span class="dot" style="background:#fbbc04"></span> 用務地（出張先）　<span style="font-weight:400;color:#888;">※複数OK・上から回る順</span></div>
+        <div id="dest-stops-list"></div>
         <div class="search-row">
-          <input type="text" id="search-dest" placeholder="住所や施設名で検索（例：豊中市役所）">
-          <button class="btn btn-primary btn-sm" onclick="searchAddress('dest')">検索</button>
+          <input type="text" id="search-newdest" placeholder="住所や施設名で検索して追加">
+          <button class="btn btn-primary btn-sm" onclick="searchAddress('newdest')">追加</button>
         </div>
-        <div class="search-results" id="results-dest"></div>
+        <div class="search-results" id="results-newdest"></div>
         <div class="btn-row">
-          <button class="btn btn-secondary btn-sm" onclick="startMapClick('dest')">🗺 地図で指定</button>
-          <button class="btn btn-danger btn-sm" onclick="clearLocation('dest')">✕ 消去</button>
+          <button class="btn btn-secondary btn-sm" onclick="startMapClick('newdest')">🗺 地図で追加</button>
+          <button class="btn btn-secondary btn-sm" id="btn-shortest" onclick="reorderShortest()" style="display:none">🔀 最短の順に並べ替え</button>
         </div>
       </div>
 
       <div class="dest-list" id="saved-dests"></div>
-      <button class="btn btn-secondary btn-sm" onclick="saveCurrentDest()" id="btn-save-dest" style="display:none">
-        ⭐ この用務地を保存
-      </button>
     </div>
 
     <!-- 通勤ルート（初期設定・保存される） -->
@@ -738,10 +734,11 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
 <script>
 const locations = {
   home: null,
-  school: null,
-  dest: null
+  school: null
 };
 const markers = {};
+let destStops = [];          // 用務地（出張先）を回る順に並べた配列 [{lat,lng,name}]
+let destMarkers = [];        // 用務地マーカー
 const routeLayers = [];
 let selectedPattern = null;
 let mapClickTarget = null;
@@ -781,7 +778,8 @@ const COLORS = {
 const LABELS = {
   home: '自宅',
   school: '学校',
-  dest: '用務地'
+  dest: '用務地',
+  newdest: '用務地'
 };
 
 const map = L.map('map').setView([34.78, 135.45], 13);
@@ -792,6 +790,7 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 loadSavedLocations();
 renderSavedDests();
+renderDestStops();
 ensureDefaultDests();
 renderCommuteStatus();
 drawCommutePreview();
@@ -800,10 +799,12 @@ map.on('click', function(e) {
   if (commuteEditMode) { addCommuteVia(e.latlng); return; }
   if (editMode) { addViaPoint(e.latlng); return; }
   if (!mapClickTarget) return;
-  setLocation(mapClickTarget, e.latlng.lat, e.latlng.lng);
+  const target = mapClickTarget;
   mapClickTarget = null;
   document.getElementById('map-hint').classList.remove('show');
   map.getContainer().style.cursor = '';
+  if (target === 'newdest') { addStop(e.latlng.lat, e.latlng.lng); return; }
+  setLocation(target, e.latlng.lat, e.latlng.lng);
 });
 
 function switchTab(tab) {
@@ -1150,6 +1151,12 @@ function pickResult(type, index) {
 
 function selectCandidate(type, cand) {
   document.getElementById(`results-${type}`).classList.remove('show');
+  if (type === 'newdest') {
+    addStop(cand.lat, cand.lng, cand.addr || cand.name);
+    const inp = document.getElementById('search-newdest');
+    if (inp) inp.value = '';
+    return;
+  }
   setLocation(type, cand.lat, cand.lng, cand.addr || cand.name);
 }
 
@@ -1181,19 +1188,24 @@ async function setLocation(type, lat, lng, displayName) {
   markers[type] = L.marker([lat, lng], { icon }).addTo(map)
     .bindPopup(`<b>${LABELS[type]}</b><br>${shortName}`);
 
-  const allCoords = Object.values(locations).filter(Boolean).map(l => [l.lat, l.lng]);
-  if (allCoords.length > 0) {
-    map.fitBounds(allCoords, { padding: [50, 50], maxZoom: 15 });
-  }
-
+  fitAll();
   saveLocations();
 
-  if (type === 'dest' && locations.dest) {
-    document.getElementById('btn-save-dest').style.display = 'inline-block';
-  }
   if (type === 'home' || type === 'school') renderCommuteStatus();
 
   showToast(`${LABELS[type]}を設定しました`);
+}
+
+// 登録済みの全地点（自宅・学校・用務地）が収まるよう地図を合わせる
+function allPoints() {
+  const a = [];
+  ['home', 'school'].forEach(k => { if (locations[k]) a.push(locations[k]); });
+  destStops.forEach(s => a.push(s));
+  return a;
+}
+function fitAll() {
+  const pts = allPoints().map(p => [p.lat, p.lng]);
+  if (pts.length) map.fitBounds(pts, { padding: [50, 50], maxZoom: 15 });
 }
 
 function clearLocation(type) {
@@ -1202,9 +1214,142 @@ function clearLocation(type) {
   document.getElementById(`coords-${type}`).textContent = '';
   document.getElementById(`card-${type}`).classList.remove('registered');
   if (markers[type]) { map.removeLayer(markers[type]); delete markers[type]; }
-  if (type === 'dest') document.getElementById('btn-save-dest').style.display = 'none';
   if (type === 'home' || type === 'school') renderCommuteStatus();
   saveLocations();
+}
+
+// ===== 用務地（複数・順番） =====
+async function addStop(lat, lng, name) {
+  const stop = { lat, lng, name: name || null };
+  if (!stop.name) {
+    try {
+      const data = await nominatimReverse(lat, lng);
+      stop.name = formatAddress(data) || data.display_name || `${lat.toFixed(6)}, ${lng.toFixed(6)}`;
+    } catch { stop.name = `${lat.toFixed(6)}, ${lng.toFixed(6)}`; }
+  }
+  destStops.push(stop);
+  drawDestMarkers();
+  renderDestStops();
+  saveLocations();
+  fitAll();
+  showToast(`用務地${destStops.length}を追加しました`);
+}
+
+function removeStop(i) {
+  destStops.splice(i, 1);
+  drawDestMarkers();
+  renderDestStops();
+  saveLocations();
+}
+
+function moveStop(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= destStops.length) return;
+  const t = destStops[i]; destStops[i] = destStops[j]; destStops[j] = t;
+  drawDestMarkers();
+  renderDestStops();
+  saveLocations();
+}
+
+function drawDestMarkers() {
+  destMarkers.forEach(mk => { try { map.removeLayer(mk); } catch {} });
+  destMarkers = [];
+  destStops.forEach((s, i) => {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div style="width:30px;height:30px;background:${COLORS.dest};border:3px solid white;border-radius:50%;box-shadow:0 2px 6px rgba(0,0,0,0.3);display:flex;align-items:center;justify-content:center;color:#333;font-size:13px;font-weight:bold;">${i + 1}</div>`,
+      iconSize: [30, 30], iconAnchor: [15, 15]
+    });
+    const mk = L.marker([s.lat, s.lng], { icon }).addTo(map)
+      .bindPopup(`<b>用務地${i + 1}</b><br>${(s.name || '').split(',').slice(0, 3).join(', ')}`);
+    destMarkers.push(mk);
+  });
+}
+
+function renderDestStops() {
+  const el = document.getElementById('dest-stops-list');
+  if (!el) return;
+  if (!destStops.length) {
+    el.innerHTML = '<div style="font-size:12px;color:#999;margin:4px 0 8px;">まだ用務地がありません。下で検索するか「地図で追加」で登録してください。</div>';
+  } else {
+    el.innerHTML = destStops.map((s, i) => `
+      <div class="dest-item">
+        <span style="background:${COLORS.dest};color:#333;font-weight:bold;width:22px;height:22px;border-radius:50%;display:inline-flex;align-items:center;justify-content:center;font-size:12px;flex-shrink:0;">${i + 1}</span>
+        <span class="dest-name" style="font-size:12px;">${(s.name || '').split(',').slice(0, 2).join(', ')}</span>
+        <span class="dest-btn" onclick="moveStop(${i},-1)" title="上へ">▲</span>
+        <span class="dest-btn" onclick="moveStop(${i},1)" title="下へ">▼</span>
+        <span class="dest-btn" onclick="saveStopAsFavorite(${i})" title="よく使う用務地に保存">⭐</span>
+        <span class="dest-btn" onclick="removeStop(${i})" title="削除">✕</span>
+      </div>`).join('');
+  }
+  const b = document.getElementById('btn-shortest');
+  if (b) b.style.display = destStops.length >= 2 ? 'inline-block' : 'none';
+}
+
+function saveStopAsFavorite(i) {
+  const s = destStops[i];
+  if (!s) return;
+  const name = prompt('用務地の名前を入力してください（例：市役所、教育センター）', (s.name || '').split(',')[0]);
+  if (!name) return;
+  savedDests.push({ name, lat: s.lat, lng: s.lng, address: s.name });
+  localStorage.setItem('saved-dests', JSON.stringify(savedDests));
+  renderSavedDests();
+  showToast(`「${name}」を保存しました`);
+}
+
+// 用務地を「回ると最短になる順」に並べ替える（直線距離で概算）
+function reorderShortest() {
+  if (destStops.length < 2) return;
+  const plan = selectedPattern ? legPlan(selectedPattern) : { start: 'home', end: 'school' };
+  const startP = locations[plan.start] || locations.home || locations.school;
+  const endP = locations[plan.end] || locations.school || locations.home;
+  if (!startP || !endP) { showToast('先に自宅・学校を登録すると最短順を計算できます'); return; }
+  const order = bestStopOrder(startP, endP, destStops);
+  destStops = order.map(i => destStops[i]);
+  drawDestMarkers();
+  renderDestStops();
+  saveLocations();
+  showToast('最短になる順に並べ替えました');
+}
+
+function bestStopOrder(start, end, stops) {
+  const n = stops.length;
+  const idx = stops.map((_, i) => i);
+  const d = (a, b) => haversineDistance(a, b);
+  if (n <= 7) {
+    let best = idx.slice(), bd = Infinity;
+    permute(idx, perm => {
+      let t = d(start, stops[perm[0]]);
+      for (let k = 0; k < perm.length - 1; k++) t += d(stops[perm[k]], stops[perm[k + 1]]);
+      t += d(stops[perm[perm.length - 1]], end);
+      if (t < bd) { bd = t; best = perm.slice(); }
+    });
+    return best;
+  }
+  // 数が多いときは最近傍法
+  const remaining = idx.slice(), order = [];
+  let cur = start;
+  while (remaining.length) {
+    let bi = 0, bd = Infinity;
+    remaining.forEach((r, ri) => { const dd = d(cur, stops[r]); if (dd < bd) { bd = dd; bi = ri; } });
+    const chosen = remaining.splice(bi, 1)[0];
+    order.push(chosen); cur = stops[chosen];
+  }
+  return order;
+}
+
+// Heap's algorithm で全順列を列挙
+function permute(arr, cb) {
+  const a = arr.slice(), c = new Array(a.length).fill(0);
+  cb(a);
+  let i = 0;
+  while (i < a.length) {
+    if (c[i] < i) {
+      const j = i % 2 ? c[i] : 0;
+      const t = a[i]; a[i] = a[j]; a[j] = t;
+      cb(a); c[i]++; i = 0;
+    } else { c[i] = 0; i++; }
+  }
 }
 
 // ===== 通勤ルート（初期設定・常時保存） =====
@@ -1746,50 +1891,31 @@ function segKm(seg) {
   return meters / 1000;
 }
 
-// パターンごとの区間（往復2区間）の定義。色・ラベル・印刷タイトル
+// パターンごとの出発地・到着地・通勤重複の有無。用務地は destStops を順に経由する。
 function legPlan(p) {
-  if (p === 1) return {
-    hasCommute: false,
-    legs: [
-      { from: 'school', to: 'dest', color: '#1a73e8', dash: null, screenLabel: '学校 → 用務地', printTitle: '学校〜用務地' },
-      { from: 'dest', to: 'school', color: '#ea4335', dash: '10,8', screenLabel: '用務地 → 学校', printTitle: '用務地〜学校' },
-    ],
-    combinedPrint: { title: '学校〜用務地', note: '勤務場所と用務地の往復経路です。', markers: ['school', 'dest'] }
-  };
-  if (p === 2) return {
-    hasCommute: true,
-    legs: [
-      { from: 'home', to: 'dest', color: '#1a73e8', dash: null, screenLabel: '自宅 → 用務地', printTitle: '自宅〜用務地' },
-      { from: 'dest', to: 'school', color: '#ea4335', dash: null, screenLabel: '用務地 → 学校', printTitle: '用務地〜学校' },
-    ]
-  };
-  if (p === 3) return {
-    hasCommute: true,
-    legs: [
-      { from: 'school', to: 'dest', color: '#1a73e8', dash: null, screenLabel: '学校 → 用務地', printTitle: '学校〜用務地' },
-      { from: 'dest', to: 'home', color: '#ea4335', dash: null, screenLabel: '用務地 → 自宅', printTitle: '用務地〜自宅' },
-    ]
-  };
-  return {
-    hasCommute: true,
-    legs: [
-      { from: 'home', to: 'dest', color: '#1a73e8', dash: null, screenLabel: '自宅 → 用務地', printTitle: '自宅〜用務地' },
-      { from: 'dest', to: 'home', color: '#ea4335', dash: '10,8', screenLabel: '用務地 → 自宅', printTitle: '用務地〜自宅' },
-    ]
-  };
+  if (p === 1) return { start: 'school', end: 'school', hasCommute: false };
+  if (p === 2) return { start: 'home', end: 'school', hasCommute: true };
+  if (p === 3) return { start: 'school', end: 'home', hasCommute: true };
+  return { start: 'home', end: 'home', hasCommute: true };
 }
 
-// 推定（直線フォールバック）時の重複kmの目安
+// ノード（自宅/学校/用務地i）の座標・ラベル・マーカー種別
+function nodeCoord(n) { return n.kind === 'stop' ? destStops[n.i] : locations[n.kind]; }
+function nodeLabel(n) { return n.kind === 'stop' ? (destStops.length > 1 ? `用務地${n.i + 1}` : '用務地') : LABELS[n.kind]; }
+function nodeMarkerType(n) { return n.kind === 'stop' ? 'dest' : n.kind; }
+function mNode(n) { const c = nodeCoord(n); return { lat: c.lat, lng: c.lng, type: nodeMarkerType(n) }; }
+
+// 推定（直線フォールバック）時の重複kmの目安。自宅に隣接する区間だけ推定する。
 function estimateOverlapKm(data, i) {
-  const p = data.pattern, dc = data.dc;
-  const d0 = data.legs[0].km, d1 = data.legs[1] ? data.legs[1].km : 0;
-  const dSchoolDest = locations.school && locations.dest ? straightKm(locations.school, locations.dest) : 0;
-  const dHomeDest = locations.home && locations.dest ? straightKm(locations.home, locations.dest) : 0;
-  let v = 0;
-  if (p === 2) v = i === 0 ? (dc + d0 - dSchoolDest) / 2 : (dc + d1 - d0) / 2;
-  else if (p === 3) v = i === 0 ? (dc + d0 - dHomeDest) / 2 : (dc + d1 - d0) / 2;
-  else if (p === 4) v = i === 0 ? (dc + d0 - dSchoolDest) / 2 : (dc + d1 - dSchoolDest) / 2;
-  return Math.max(0, v);
+  const leg = data.legs[i], dc = data.dc;
+  const fromHome = leg.fromNode.kind === 'home';
+  const toHome = leg.toNode.kind === 'home';
+  if (!fromHome && !toHome) return 0;
+  const other = fromHome ? leg.toNode : leg.fromNode;
+  const otherCoord = nodeCoord(other);
+  if (!otherCoord || !locations.school) return 0;
+  const dOtherSchool = straightKm(otherCoord, locations.school);
+  return Math.max(0, (dc + leg.km - dOtherSchool) / 2);
 }
 
 // 1区間の重複ユニット（ON/OFF可能）を再計算
@@ -1890,18 +2016,23 @@ function legPrintMapV2(leg, commuteRoute) {
   const note = ovKm > 0.05
     ? `<span style="color:#c62828;font-weight:600;">黄＋赤でハイライトした区間が「除算する道」（約 ${ovKm.toFixed(1)} km）です。</span>この区間を除いた距離を申請します。`
     : '通勤経路（灰色点線）との重複はありません。全区間が対象です。';
-  return { title: leg.printTitle, distanceLabel: `${leg.km.toFixed(1)} km`, note, markers: [m(leg.from), m(leg.to)], layers };
+  return { title: leg.printTitle, distanceLabel: `${leg.km.toFixed(1)} km`, note, markers: [mNode(leg.fromNode), mNode(leg.toNode)], layers };
 }
 
 function composePrintMaps(data) {
-  const { legs, commuteRoute, dc, plan, pattern } = data;
+  const { legs, commuteRoute, dc, pattern } = data;
   if (pattern === 1) {
     const total = legs.reduce((s, l) => s + l.km, 0);
+    const seen = new Set(), markers = [];
+    legs.forEach(l => [l.fromNode, l.toNode].forEach(nd => {
+      const key = nd.kind + (nd.i != null ? nd.i : '');
+      if (!seen.has(key)) { seen.add(key); markers.push(mNode(nd)); }
+    }));
     return [{
-      title: plan.combinedPrint.title,
-      distanceLabel: `往復 ${total.toFixed(1)} km`,
-      note: plan.combinedPrint.note,
-      markers: plan.combinedPrint.markers.map(m),
+      title: '学校〜用務地',
+      distanceLabel: `合計 ${total.toFixed(1)} km`,
+      note: '勤務場所と用務地を回る経路です。',
+      markers,
       layers: legs.map(leg => ({ geometry: leg.geometry, color: leg.color, dash: leg.dash }))
     }];
   }
@@ -1933,12 +2064,20 @@ async function buildPattern(costing, altIndex) {
     }
   }
 
+  // 出発地 → 用務地1 → 用務地2 → … → 到着地 のノード列
+  const nodes = [{ kind: plan.start }, ...destStops.map((s, i) => ({ kind: 'stop', i })), { kind: plan.end }];
+
   const legs = [];
-  for (const ld of plan.legs) {
-    const route = await getRoute(locations[ld.from], locations[ld.to], costing, altIndex);
+  for (let k = 0; k < nodes.length - 1; k++) {
+    const a = nodes[k], b = nodes[k + 1];
+    const isFirst = k === 0, isLast = k === nodes.length - 2;
+    const route = await getRoute(nodeCoord(a), nodeCoord(b), costing, altIndex);
     legs.push({
-      from: ld.from, to: ld.to, color: ld.color, dash: ld.dash,
-      screenLabel: ld.screenLabel, printTitle: ld.printTitle,
+      fromNode: a, toNode: b,
+      color: isFirst ? '#1a73e8' : (isLast ? '#ea4335' : '#34a853'),
+      dash: (plan.start === plan.end && isLast) ? '10,8' : null,
+      screenLabel: `${nodeLabel(a)} → ${nodeLabel(b)}`,
+      printTitle: `${nodeLabel(a)}〜${nodeLabel(b)}`,
       vias: [],
       geometry: route.geometry,
       km: route.distance / 1000,
@@ -1958,7 +2097,7 @@ async function buildPattern(costing, altIndex) {
 // 1区間を経由地つきで再計算（手動修正）
 async function recomputeLeg(data, li) {
   const leg = data.legs[li];
-  const points = [locations[leg.from], ...leg.vias, locations[leg.to]];
+  const points = [nodeCoord(leg.fromNode), ...leg.vias, nodeCoord(leg.toNode)];
   const route = await getRouteVia(points, data.costing, data.altIndex);
   leg.geometry = route.geometry;
   leg.km = route.distance / 1000;
@@ -1978,7 +2117,7 @@ async function calculateRoute() {
 
   if (needHome && !locations.home) { showToast('自宅を登録してください'); return; }
   if (needSchool && !locations.school) { showToast('勤務場所（学校）を登録してください'); return; }
-  if (!locations.dest) { showToast('用務地を登録してください'); return; }
+  if (!destStops.length) { showToast('用務地を1つ以上登録してください'); return; }
   if (needCommute && !savedCommute) {
     showToast('先に「通勤ルート（初期設定）」で通勤ルートを確定してください');
     document.getElementById('btn-setup-commute').scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -2503,9 +2642,7 @@ async function openPrintMaps() {
   await new Promise(r => setTimeout(r, 200));
 
   // 自宅・勤務地・用務地（登録済みのもの）。どの地図にも必ず収まるよう範囲に含める
-  const contextPts = ['home', 'school', 'dest']
-    .filter(t => locations[t])
-    .map(t => L.latLng(locations[t].lat, locations[t].lng));
+  const contextPts = allPoints().map(p => L.latLng(p.lat, p.lng));
 
   const built = [];
   d.printMaps.forEach((pm, i) => {
@@ -2550,38 +2687,35 @@ function saveLocations() {
   for (const k in locations) {
     if (locations[k]) data[k] = locations[k];
   }
+  data.destStops = destStops;
   localStorage.setItem('saved-locations', JSON.stringify(data));
 }
 
 function loadSavedLocations() {
   try {
     const data = JSON.parse(localStorage.getItem('saved-locations') || '{}');
-    for (const k in data) {
-      if (data[k] && data[k].lat && data[k].lng) {
-        setLocation(k, data[k].lat, data[k].lng, data[k].name);
-      }
+    ['home', 'school'].forEach(k => {
+      if (data[k] && data[k].lat && data[k].lng) setLocation(k, data[k].lat, data[k].lng, data[k].name);
+    });
+    if (Array.isArray(data.destStops)) {
+      destStops = data.destStops.filter(s => s && s.lat && s.lng);
+    } else if (data.dest && data.dest.lat) {
+      // 旧データ（用務地1つ）からの移行
+      destStops = [{ lat: data.dest.lat, lng: data.dest.lng, name: data.dest.name }];
     }
+    drawDestMarkers();
+    renderDestStops();
   } catch {}
-}
-
-function saveCurrentDest() {
-  if (!locations.dest) return;
-  const name = prompt('用務地の名前を入力してください（例：市役所、教育センター）');
-  if (!name) return;
-  savedDests.push({ name, lat: locations.dest.lat, lng: locations.dest.lng, address: locations.dest.name });
-  localStorage.setItem('saved-dests', JSON.stringify(savedDests));
-  renderSavedDests();
-  showToast(`「${name}」を保存しました`);
 }
 
 function renderSavedDests() {
   const el = document.getElementById('saved-dests');
   if (savedDests.length === 0) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div style="font-size:12px;font-weight:600;color:#5f6368;margin-bottom:6px;">⭐ 保存済み用務地</div>' +
+  el.innerHTML = '<div style="font-size:12px;font-weight:600;color:#5f6368;margin-bottom:6px;">⭐ 保存済み用務地（タップで追加）</div>' +
     savedDests.map((d, i) => `
       <div class="dest-item">
         <span class="dest-name">${d.name}</span>
-        <span class="dest-btn" onclick="loadDest(${i})" title="読み込み">📍</span>
+        <span class="dest-btn" onclick="loadDest(${i})" title="用務地に追加">➕</span>
         <span class="dest-btn" onclick="removeDest(${i})" title="削除">✕</span>
       </div>
     `).join('');
@@ -2589,7 +2723,7 @@ function renderSavedDests() {
 
 function loadDest(i) {
   const d = savedDests[i];
-  setLocation('dest', d.lat, d.lng, d.address);
+  addStop(d.lat, d.lng, d.address);
 }
 
 // 初期用務地を初回のみブラウザ側でジオコーディングして登録
