@@ -188,11 +188,37 @@ function findRoutes_(origin, dest, opt) {
     return {
       distance: distance,
       duration: duration,
-      polyline: (route.overview_polyline && route.overview_polyline.points) || '',
+      polyline: routePolyline_(route),
       summary: route.summary || '',
       hasToll: false
     };
   });
+}
+
+/**
+ * ルートの形状ポリラインを返す。
+ * overview_polyline は簡略化されていて頂点が粗く（直線部で数百m間隔）、
+ * 地図表示のズレや重複区間の取りこぼしの原因になるため、
+ * 各ステップの詳細ポリラインを連結した高解像度の線を優先して返す。
+ */
+function routePolyline_(route) {
+  try {
+    var pts = [];
+    (route.legs || []).forEach(function (leg) {
+      (leg.steps || []).forEach(function (st) {
+        var enc = st.polyline && st.polyline.points;
+        if (!enc) return;
+        var dec = Maps.decodePolyline(enc); // [lat, lng, lat, lng, ...]
+        var start = 0;
+        // 接続点の重複を除いて連結
+        if (pts.length >= 2 && dec.length >= 2 &&
+            pts[pts.length - 2] === dec[0] && pts[pts.length - 1] === dec[1]) start = 2;
+        for (var k = start; k < dec.length; k++) pts.push(dec[k]);
+      });
+    });
+    if (pts.length >= 4) return Maps.encodePolyline(pts);
+  } catch (e) { /* 失敗時は overview にフォールバック */ }
+  return (route.overview_polyline && route.overview_polyline.points) || '';
 }
 
 /**

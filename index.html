@@ -483,7 +483,7 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
 <div class="header">
   <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
   <h1>出張距離測定・申請ガイド</h1>
-  <span class="subtitle">APIキー不要 ─ OpenStreetMap使用</span>
+  <span class="subtitle">v2 ─ Googleマップルート採用・APIキー不要</span>
 </div>
 
 <div class="tabs">
@@ -496,7 +496,7 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
   <div class="sidebar">
     <!-- 地点登録 -->
     <div class="section">
-      <div class="section-title"><span class="icon">🏠</span> 地点登録</div>
+      <div class="section-title"><span class="icon">🏠</span> ① 地点登録（自宅・学校・用務地）</div>
 
       <div class="location-card" id="card-home">
         <div class="label"><span class="dot" style="background:#ea4335"></span> 自宅</div>
@@ -547,7 +547,7 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
 
     <!-- 通勤ルート（初期設定・保存される） -->
     <div class="section">
-      <div class="section-title"><span class="icon">🛣</span> 通勤ルート（初期設定）</div>
+      <div class="section-title"><span class="icon">🛣</span> ② 通勤ルート（初期設定）</div>
       <div class="map-note" style="margin-top:0;">
         自宅と勤務場所（学校）を登録し、<strong>いつもの通勤ルートを1本だけ確定</strong>してください。
         ここで保存した通勤ルートは常に基準として保存され、出張ルートと重なる区間（＝旅費から差し引く区間）の判定に毎回使われます。
@@ -561,7 +561,7 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
 
     <!-- 出張パターン -->
     <div class="section">
-      <div class="section-title"><span class="icon">🚗</span> 出張パターン選択</div>
+      <div class="section-title"><span class="icon">🚗</span> ③ 出張パターン選択</div>
 
       <div class="pattern-card" data-pattern="1" onclick="selectPattern(1)">
         <span class="pattern-num">①</span>
@@ -597,6 +597,7 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
       <button class="btn btn-success" style="width:100%; padding:12px; font-size:15px;" onclick="calculateRoute()" id="btn-calc">
         🔄 距離を計算する
       </button>
+      <div id="calc-hint" style="font-size:12px;color:#888;text-align:center;margin-top:6px;"></div>
     </div>
 
     <!-- 計算結果 -->
@@ -721,9 +722,11 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
       <strong>💡 重複区間の除算について</strong><br><br>
       直行・直帰の場合、出張経路のうち通勤経路と重複する区間は距離から差し引きます。<br>
       このアプリでは、各区間の距離を自動計算し、重複区間の推定値を表示します。<br><br>
-      <strong>重複区間の推定方法：</strong><br>
-      通勤距離（自宅↔学校）と出張経路の各区間距離から、三角不等式を用いて重複区間を推定しています。
-      実際の重複区間と多少の誤差が生じる場合があります。正確な値が必要な場合は、地図上で経路を確認してください。
+      <strong>重複区間の判定方法：</strong><br>
+      出張経路と通勤経路を約25m間隔の点に分けて比較し、通勤経路から約45m以内を通る部分を「重複」と判定します
+      （120m未満の途切れは同じ重複としてつなぎ、60m未満の断片はノイズとして除外）。<br>
+      上下線が分かれた道路などでは多少の誤差が出ることがあります。実際と違う場合は、計算結果の
+      「✂ 重複区間（除算）の調整」でON/OFFを切り替えてください。
     </div>
   </div>
 </div>
@@ -794,6 +797,7 @@ renderDestStops();
 ensureDefaultDests();
 renderCommuteStatus();
 drawCommutePreview();
+updateCalcHint();
 
 map.on('click', function(e) {
   if (commuteEditMode) { addCommuteVia(e.latlng); return; }
@@ -814,6 +818,30 @@ function switchTab(tab) {
   document.getElementById(`tab-${tab}`).classList.add('active');
   if (tab === 'measure') {
     setTimeout(() => map.invalidateSize(), 100);
+  }
+}
+
+// HTMLに埋め込む文字列の無害化（ユーザー入力の記号で表示が崩れないように）
+function escHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+// 「距離を計算する」ボタンの下に、あと何が必要かを表示する
+function updateCalcHint() {
+  const el = document.getElementById('calc-hint');
+  if (!el) return;
+  const miss = [];
+  if (!locations.school) miss.push('学校の登録');
+  if (!destStops.length) miss.push('用務地の登録');
+  if ([2, 3, 4].includes(selectedPattern) && !locations.home) miss.push('自宅の登録');
+  if ([2, 3, 4].includes(selectedPattern) && !savedCommute) miss.push('通勤ルートの確定');
+  if (selectedPattern == null) miss.push('パターンの選択');
+  if (miss.length) {
+    el.innerHTML = 'あと必要：' + miss.join('・');
+    el.style.color = '#e65100';
+  } else {
+    el.innerHTML = '✔ 準備OK！計算できます';
+    el.style.color = '#2e7d32';
   }
 }
 
@@ -1192,6 +1220,7 @@ async function setLocation(type, lat, lng, displayName) {
   saveLocations();
 
   if (type === 'home' || type === 'school') renderCommuteStatus();
+  updateCalcHint();
 
   showToast(`${LABELS[type]}を設定しました`);
 }
@@ -1215,6 +1244,7 @@ function clearLocation(type) {
   document.getElementById(`card-${type}`).classList.remove('registered');
   if (markers[type]) { map.removeLayer(markers[type]); delete markers[type]; }
   if (type === 'home' || type === 'school') renderCommuteStatus();
+  updateCalcHint();
   saveLocations();
 }
 
@@ -1284,6 +1314,7 @@ function renderDestStops() {
   }
   const b = document.getElementById('btn-shortest');
   if (b) b.style.display = destStops.length >= 2 ? 'inline-block' : 'none';
+  updateCalcHint();
 }
 
 function saveStopAsFavorite(i) {
@@ -1354,6 +1385,15 @@ function permute(arr, cb) {
 
 // ===== 通勤ルート（初期設定・常時保存） =====
 
+// 保存済み通勤ルートの線が粗い（旧バージョンで保存された低解像度）かどうか。
+// v2からは高解像度の線で保存されるため、粗い場合は取り直しをすすめる。
+function commuteGeomLowRes() {
+  try {
+    const c = savedCommute.geometry.coordinates;
+    return c.length > 1 && (savedCommute.distanceKm * 1000) / (c.length - 1) > 60;
+  } catch { return false; }
+}
+
 // 保存済み通勤ルートの端点が、現在登録中の自宅/学校とほぼ一致しているか（約80m以内）
 function commuteMatchesLocations() {
   if (!savedCommute || !locations.home || !locations.school) return false;
@@ -1378,6 +1418,7 @@ function renderCommuteStatus() {
            <div style="font-weight:700;color:#1b5e20;">✅ 通勤ルート確定済み</div>
            <div class="result-row"><span>通勤距離（自宅↔学校）</span><span class="val">${savedCommute.distanceKm.toFixed(1)} km</span></div>
            <div style="font-size:12px;color:#555;margin-top:4px;">この通勤ルートを基準に、出張ルートとの重複区間を判定します。</div>
+           ${commuteGeomLowRes() ? '<div style="font-size:11.5px;color:#e65100;margin-top:6px;">💡 アプリの判定精度が上がりました。より正確な重複判定のため、一度「設定し直す」で通勤ルートを取り直すのがおすすめです。</div>' : ''}
            <button class="btn btn-secondary btn-sm" style="width:100%;margin-top:8px;" onclick="enterCommuteEditFromSaved()">🖊 このルートを手動で調整する</button>
          </div>`;
     btn.textContent = outdated ? '🛣 通勤ルートを再設定する' : '🛣 通勤ルートを設定し直す';
@@ -1391,6 +1432,7 @@ function renderCommuteStatus() {
     btn.style.width = '100%';
     btn.style.marginTop = '8px';
   }
+  updateCalcHint();
 }
 
 // 通勤ルートの候補を取得して、ユーザーに選んで確定してもらう
@@ -1498,7 +1540,9 @@ function enterCommuteEdit(baseRoute) {
 
 async function addCommuteVia(latlng) {
   if (!commuteEdit) return;
-  commuteEdit.vias.push({ lat: latlng.lat, lng: latlng.lng });
+  // クリック位置をルートに沿った正しい順序に挿入（クリックの順番に依存しない）
+  const geom = commuteEdit.route && commuteEdit.route.geometry;
+  insertViaOrdered(commuteEdit.vias, geom, { lat: latlng.lat, lng: latlng.lng });
   await recomputeCommuteEdit();
 }
 
@@ -1557,7 +1601,7 @@ function renderCommuteEditPanel() {
     <div class="route-compare show" style="margin-top:8px;">
       <div class="rc-tools">
         <div class="rc-tool-title">🖊 通勤ルートを手動で調整中</div>
-        <div class="rc-tool-note">地図をクリックして、実際に通る道に経由地を足してください。マーカーはドラッグで移動、クリックで削除できます。</div>
+        <div class="rc-tool-note">地図上で<strong>実際に通る道</strong>をクリックして経由地を足してください。クリックの順番は気にしなくてOK（ルートに沿った正しい順に自動で入ります）。マーカーはドラッグで移動、クリックで削除。</div>
         <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0 2px;">
           <span style="font-weight:600;">調整後の距離</span>
           <span style="font-weight:700;color:#1b5e20;">${km} km</span>
@@ -1637,6 +1681,7 @@ function selectPattern(num) {
   selectedPattern = num;
   document.querySelectorAll('.pattern-card').forEach(c => c.classList.remove('selected'));
   document.querySelector(`.pattern-card[data-pattern="${num}"]`).classList.add('selected');
+  updateCalcHint();
 }
 
 function haversineDistance(from, to) {
@@ -1667,47 +1712,147 @@ function distPointToSeg(p, a, b) {
   return Math.hypot(p[0]-(a[0]+t*dx), p[1]-(a[1]+t*dy));
 }
 
-function minDistToPath(ptXY, pathXY) {
+// 線分列を一定間隔（stepMeters）で補間して密にする（座標は[lng,lat]）。
+// ルートのポリラインは頂点が粗い（直線部で数百m間隔）ことがあり、
+// そのまま比べると重複区間を取りこぼすため、比較前に必ず密にする。
+function densifyCoords(coords, stepMeters) {
+  const step = stepMeters || 25;
+  const out = [];
+  for (let i = 0; i < coords.length - 1; i++) {
+    const a = coords[i], b = coords[i + 1];
+    out.push(a);
+    const d = haversineDistance({ lng: a[0], lat: a[1] }, { lng: b[0], lat: b[1] });
+    const n = Math.floor(d / step);
+    for (let k = 1; k <= n; k++) {
+      const t = k / (n + 1);
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+  }
+  out.push(coords[coords.length - 1]);
+  return out;
+}
+
+// 通勤経路の点を約120mのマス目に登録し、近くのマスにある線分だけ距離計算する（高速化）
+function minDistToPathGrid(ptXY, pathXY, grid, cell) {
+  const ix = Math.floor(ptXY[0] / cell), iy = Math.floor(ptXY[1] / cell);
   let min = Infinity;
-  for (let i = 0; i < pathXY.length - 1; i++) {
-    const d = distPointToSeg(ptXY, pathXY[i], pathXY[i+1]);
-    if (d < min) min = d;
+  const checked = new Set();
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      const bucket = grid.get((ix + dx) + '_' + (iy + dy));
+      if (!bucket) continue;
+      for (const i of bucket) {
+        for (const s of [i - 1, i]) {
+          if (s < 0 || s >= pathXY.length - 1 || checked.has(s)) continue;
+          checked.add(s);
+          const d = distPointToSeg(ptXY, pathXY[s], pathXY[s + 1]);
+          if (d < min) min = d;
+        }
+      }
+    }
   }
   return min;
 }
 
-// legGeometry と commuteGeometry の重なる区間を返す（GeoJSON LineString）
+// legGeometry と commuteGeometry の重なる区間を返す（GeoJSON LineString）。
+// 手順：両ルートを約25m間隔に補間 → 通勤経路から45m以内の点を「重複」と判定
+//       → 120m未満の途切れはつなぎ、60m未満の断片は捨てる（分離帯・簡略化誤差への耐性）
 function computeOverlap(legGeometry, commuteGeometry, thresholdMeters) {
-  const threshold = thresholdMeters || 35;
-  const legCoords = legGeometry.coordinates;
-  const comCoords = commuteGeometry.coordinates;
-  if (!legCoords || !comCoords || legCoords.length < 2 || comCoords.length < 2) {
+  const threshold = thresholdMeters || 45;
+  const rawLeg = legGeometry && legGeometry.coordinates;
+  const rawCom = commuteGeometry && commuteGeometry.coordinates;
+  if (!rawLeg || !rawCom || rawLeg.length < 2 || rawCom.length < 2) {
     return { segments: [], km: 0 };
   }
+
+  const legCoords = densifyCoords(rawLeg, 25);
+  const comCoords = densifyCoords(rawCom, 25);
+
   const ref = { lng: legCoords[0][0], lat: legCoords[0][1] };
   const comXY = comCoords.map(c => llToXY(c[0], c[1], ref));
+  const legXY = legCoords.map(c => llToXY(c[0], c[1], ref));
 
-  const flags = legCoords.map(c => minDistToPath(llToXY(c[0], c[1], ref), comXY) <= threshold);
+  // 通勤経路のグリッド索引
+  const cell = 120;
+  const grid = new Map();
+  comXY.forEach((p, i) => {
+    const key = Math.floor(p[0] / cell) + '_' + Math.floor(p[1] / cell);
+    if (!grid.has(key)) grid.set(key, []);
+    grid.get(key).push(i);
+  });
 
-  const segments = [];
-  let current = [];
-  for (let i = 0; i < legCoords.length; i++) {
-    if (flags[i]) {
-      current.push(legCoords[i]);
-    } else {
-      if (current.length >= 2) segments.push(current);
-      current = [];
+  const flags = legXY.map(p => minDistToPathGrid(p, comXY, grid, cell) <= threshold);
+
+  // ルートに沿った累積距離
+  const cum = [0];
+  for (let i = 1; i < legXY.length; i++) {
+    cum.push(cum[i - 1] + Math.hypot(legXY[i][0] - legXY[i - 1][0], legXY[i][1] - legXY[i - 1][1]));
+  }
+
+  // 重複と判定された連続区間（run）を抽出
+  const runs = [];
+  let s = -1;
+  for (let i = 0; i < flags.length; i++) {
+    if (flags[i] && s === -1) s = i;
+    if (s !== -1 && (!flags[i] || i === flags.length - 1)) {
+      runs.push([s, flags[i] ? i : i - 1]);
+      s = -1;
     }
   }
-  if (current.length >= 2) segments.push(current);
-
-  let meters = 0;
-  segments.forEach(seg => {
-    for (let i = 0; i < seg.length - 1; i++) {
-      meters += haversineDistance({ lng: seg[i][0], lat: seg[i][1] }, { lng: seg[i+1][0], lat: seg[i+1][1] });
+  // 小さな途切れ（120m未満）は同じ重複としてつなぐ
+  const merged = [];
+  runs.forEach(r => {
+    if (merged.length && cum[r[0]] - cum[merged[merged.length - 1][1]] < 120) {
+      merged[merged.length - 1][1] = r[1];
+    } else {
+      merged.push(r.slice());
     }
   });
+  // 短すぎる断片（60m未満）はノイズとして捨てる
+  const kept = merged.filter(r => cum[r[1]] - cum[r[0]] >= 60);
+
+  const segments = kept.map(r => legCoords.slice(r[0], r[1] + 1));
+  let meters = 0;
+  kept.forEach(r => { meters += cum[r[1]] - cum[r[0]]; });
   return { segments, km: meters / 1000 };
+}
+
+// 地点がルートのどのあたり（始点から何%の位置）に最も近いかを求める
+function fractionAlong(geometry, pt) {
+  const coords = geometry.coordinates;
+  const ref = { lng: coords[0][0], lat: coords[0][1] };
+  const p = llToXY(pt.lng, pt.lat, ref);
+  const xy = coords.map(c => llToXY(c[0], c[1], ref));
+  let total = 0;
+  const segLen = [];
+  for (let i = 0; i < xy.length - 1; i++) {
+    const L = Math.hypot(xy[i + 1][0] - xy[i][0], xy[i + 1][1] - xy[i][1]);
+    segLen.push(L); total += L;
+  }
+  let best = { d: Infinity, frac: 0 };
+  let cum = 0;
+  for (let i = 0; i < xy.length - 1; i++) {
+    const a = xy[i], b = xy[i + 1];
+    const dx = b[0] - a[0], dy = b[1] - a[1];
+    const len2 = dx * dx + dy * dy;
+    let t = len2 ? ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2 : 0;
+    t = Math.max(0, Math.min(1, t));
+    const d = Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+    if (d < best.d) best = { d, frac: total ? (cum + t * segLen[i]) / total : 0 };
+    cum += segLen[i];
+  }
+  return best;
+}
+
+// 経由地を「ルートに沿った順」になる位置へ挿入する（クリックの順番に依存しない）
+function insertViaOrdered(vias, geometry, via) {
+  if (!geometry || !geometry.coordinates || geometry.coordinates.length < 2) { vias.push(via); return; }
+  const f = fractionAlong(geometry, via).frac;
+  let idx = vias.length;
+  for (let i = 0; i < vias.length; i++) {
+    if (fractionAlong(geometry, vias[i]).frac > f) { idx = i; break; }
+  }
+  vias.splice(idx, 0, via);
 }
 
 let gasAvailable = true;
@@ -2172,6 +2317,10 @@ async function calculateRoute() {
 
     showToast('距離計算が完了しました');
 
+    // 結果までスクロールして次にやることを見せる
+    const rs = document.getElementById('result-section');
+    if (rs) setTimeout(() => rs.scrollIntoView({ behavior: 'smooth', block: 'start' }), 150);
+
   } catch (e) {
     console.error('[計算エラー]', e);
     showToast('計算エラー: ' + e.message + '（F12のConsoleで詳細確認）');
@@ -2324,7 +2473,9 @@ async function rerouteEditLeg() {
 
 async function addViaPoint(latlng) {
   if (!lastCalc) return;
-  activeData().legs[editLegIndex].vias.push({ lat: latlng.lat, lng: latlng.lng });
+  const leg = activeData().legs[editLegIndex];
+  // クリック位置をルートに沿った正しい順序に挿入（後から途中に足しても大回りしない）
+  insertViaOrdered(leg.vias, leg.geometry, { lat: latlng.lat, lng: latlng.lng });
   await rerouteEditLeg();
 }
 
@@ -2437,7 +2588,7 @@ function renderCandidates() {
     const legBtns = d.legs.map((leg, i) =>
       `<button class="rc-legbtn${editLegIndex === i ? ' active' : ''}" onclick="setEditLeg(${i})">${leg.screenLabel}${leg.vias.length ? `（経由地${leg.vias.length}）` : ''}</button>`
     ).join('');
-    html += `<div class="rc-tool-note">①下で修正する区間を選び、②地図をクリックして通したい場所（経由地）を追加します。マーカーをクリックで削除、ドラッグで移動できます。</div>
+    html += `<div class="rc-tool-note">①下で修正する区間を選び、②地図上で<strong>実際に通る道</strong>をクリックして経由地を追加します。ルートの近くをクリックすれば、順番は自動で正しく入ります。マーカーはドラッグで移動、クリックで削除。</div>
       <div class="rc-legtabs">${legBtns}</div>
       <div class="rc-edit-actions">
         <button class="rc-mini" onclick="clearVias()">この区間の経由地をクリア</button>
@@ -2472,13 +2623,13 @@ function renderResult() {
   ).join('');
 
   // 申請の「用件」欄にそのまま貼れるコピー用テキスト（出張理由＋順路＋直行/直帰）
-  const reasonVal = (c.reason || '').replace(/"/g, '&quot;');
+  const reasonVal = escHtml(c.reason || '').replace(/"/g, '&quot;');
   html += `<div style="margin-top:10px;padding:10px;border:2px dashed #1a73e8;border-radius:8px;background:#f5f9ff;">
       <div style="font-size:12px;color:#1a73e8;font-weight:600;margin-bottom:6px;">📋 申請の「用件」欄に貼り付ける文章</div>
       <input id="trip-reason" placeholder="出張の理由（例：○○会議、△△研究会参加のため）" value="${reasonVal}" oninput="onReasonInput(this.value)"
         style="width:100%;box-sizing:border-box;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:14px;margin-bottom:8px;">
       <div style="display:flex;gap:8px;align-items:flex-start;">
-        <textarea id="claim-text" readonly rows="2" style="flex:1;min-width:0;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:14px;font-weight:700;color:#1b5e20;background:#fff;resize:none;">${buildYoukenText(c, d)}</textarea>
+        <textarea id="claim-text" readonly rows="2" style="flex:1;min-width:0;padding:9px 10px;border:1px solid #9fc0ef;border-radius:6px;font-size:14px;font-weight:700;color:#1b5e20;background:#fff;resize:none;">${escHtml(buildYoukenText(c, d))}</textarea>
         <button class="btn btn-primary btn-sm" style="white-space:nowrap;" onclick="copyClaimText()">📋 コピー</button>
       </div>
       <div style="font-size:11px;color:#888;margin-top:5px;">出張理由を入れると用件欄の文章が完成します。${chokkouLabel(c.pattern) ? '自宅発着なので「' + chokkouLabel(c.pattern) + '」と自宅住所も自動で付きます。' : ''}</div>
@@ -2565,7 +2716,7 @@ function buildSuggestion(c, d) {
   return `
     <h4>📝 申請のしかた（パターン${c.pattern}：${c.patternName}）</h4>
     <ol style="margin-left:16px; margin-top:6px;">
-      <li>校務支援システムの出張申請の「用件」欄に <strong style="color:#1b5e20;">${buildYoukenText(c, d)}</strong> を入力する（上の📋ボタンでそのままコピーできます）。</li>
+      <li>校務支援システムの出張申請の「用件」欄に <strong style="color:#1b5e20;">${escHtml(buildYoukenText(c, d))}</strong> を入力する（上の📋ボタンでそのままコピーできます）。</li>
       ${routeLine}
       ${dedu}
       <li>「出張・研修命令書」を印刷する。</li>
@@ -2614,7 +2765,7 @@ async function openPrintMaps() {
       <tr><td>出張パターン</td><td>パターン${c.pattern}：${c.patternName}</td></tr>
       ${c.canCompare ? `<tr><td>選んだルート</td><td>${activeCand().label}（約${d.durationMin}分${d.hasToll ? '・有料道路あり' : ''}）</td></tr>` : ''}
       ${d.results.map(r => `<tr><td>${r.label}</td><td>${r.value}</td></tr>`).join('')}
-      <tr class="total"><td>用件欄に入力</td><td>${buildYoukenText(c, d)}</td></tr>
+      <tr class="total"><td>用件欄に入力</td><td>${escHtml(buildYoukenText(c, d))}</td></tr>
       <tr><td>申請距離（合計）</td><td>${d.totalClaim.toFixed(1)} km</td></tr>
       <tr><td>測定日</td><td>${c.date}</td></tr>
     </table>
