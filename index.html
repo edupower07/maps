@@ -1465,6 +1465,7 @@ async function setupCommute() {
     window._commuteVariants = uniq;
 
     choicesEl.innerHTML = '<div style="font-size:12px;font-weight:600;color:#1a73e8;margin:8px 0 6px;">いつも使う通勤ルートを選んでください：</div>' +
+      '<div style="font-size:11px;color:#e65100;font-weight:600;margin-bottom:6px;">🟠 地図のオレンジ色の線＝いま見ている候補です</div>' +
       uniq.map((v, i) => {
         const lab = commuteRouteLabel(v, i === 0);
         return `<div class="location-card" style="cursor:pointer;" onmouseover="previewCommuteVariant(${i})" onclick="chooseCommute(${i})">
@@ -1499,18 +1500,32 @@ function commuteRouteLabel(v, isShortest) {
   const tag = v.hasToll
     ? '<span style="color:#c62828;font-weight:600;font-size:11px;">有料道路あり</span>'
     : '<span style="color:#2e7d32;font-weight:600;font-size:11px;">通行料なし</span>';
-  const note = v.hasToll ? '料金のかかる道路を含みます。' : '';
+  // ルート名に高速の名前が入っているのに通行料なし＝高速本線ではなく、
+  // 高架下・側道などの一般道を通っている可能性が高い（誤解を防ぐ注記）
+  const hwyName = /高速|自動車道|都市高速/.test(v.summary || '');
+  let note = '';
+  if (v.hasToll) note = '料金のかかる道路（高速・有料道路）を通ります。';
+  else if (hwyName) note = 'ルート名に高速道路の名前がありますが通行料なし＝高速本線ではなく、高架下や側道の一般道を通るルートと考えられます。地図でご確認ください。';
   return { icon, title, tag, note };
 }
 
-// 候補を地図上にプレビュー表示
+// 候補を地図上にプレビュー表示（白フチ＋オレンジの太線で見やすく）
 function previewCommuteVariant(i) {
   const v = window._commuteVariants && window._commuteVariants[i];
   if (!v) return;
   commutePreviewIndex = i;
   if (commutePreviewLayer) { map.removeLayer(commutePreviewLayer); commutePreviewLayer = null; }
-  commutePreviewLayer = L.geoJSON(v.geometry, { style: { color: '#9e9e9e', weight: 5, opacity: 0.9 } }).addTo(map);
+  commutePreviewLayer = L.featureGroup([
+    L.geoJSON(v.geometry, { style: { color: '#ffffff', weight: 10, opacity: 0.9 } }),
+    L.geoJSON(v.geometry, { style: { color: '#ff6d00', weight: 5, opacity: 1 } })
+  ]).addTo(map);
   try { map.fitBounds(commutePreviewLayer.getBounds(), { padding: [50, 50] }); } catch {}
+  // いま見ている候補カードをオレンジでハイライト
+  document.querySelectorAll('#commute-choices .location-card').forEach((el, idx) => {
+    el.style.borderColor = idx === i ? '#ff6d00' : '#e0e0e0';
+    el.style.background = idx === i ? '#fff7f0' : '#f8f9fa';
+    el.style.borderWidth = idx === i ? '2px' : '1px';
+  });
 }
 
 // ===== 通勤ルートの手動調整（経由地で実際に通る道に合わせる） =====
@@ -1578,7 +1593,10 @@ function drawCommuteEditPreview() {
   clearCommuteViaMarkers();
   const r = commuteEdit && commuteEdit.route;
   if (r && r.geometry) {
-    commutePreviewLayer = L.geoJSON(r.geometry, { style: { color: '#9e9e9e', weight: 5, opacity: 0.9 } }).addTo(map);
+    commutePreviewLayer = L.featureGroup([
+      L.geoJSON(r.geometry, { style: { color: '#ffffff', weight: 10, opacity: 0.9 } }),
+      L.geoJSON(r.geometry, { style: { color: '#ff6d00', weight: 5, opacity: 1 } })
+    ]).addTo(map);
   }
   if (!commuteEdit) return;
   commuteEdit.vias.forEach((v, idx) => {

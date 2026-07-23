@@ -31,7 +31,7 @@
  *   avoidHighways 任意  "1" で高速道路を回避
  *   avoidTolls    任意  "1" で有料道路を回避
  *   alternatives  任意  "1" で代替ルートも返す
- *   detectToll    任意  "1" で有料道路の有無を推定（avoidTolls=1 のときは無効）
+ *   （有料道路の有無は Google の警告情報 warnings から自動判定します）
  *
  * 【レスポンス（JSON）】
  *   成功: { ok:true,  routes:[ { distance, duration, polyline, summary, hasToll } ] }
@@ -66,7 +66,6 @@ function doGet(e) {
       var avoidHighways = p.avoidHighways === '1';
       var avoidTolls    = p.avoidTolls === '1';
       var alternatives  = p.alternatives === '1';
-      var detectToll    = p.detectToll === '1' && !avoidTolls;
       var waypoints     = parseWaypoints_(p.waypoints);
 
       var routes = findRoutes_(origin, dest, {
@@ -75,27 +74,6 @@ function doGet(e) {
         alternatives: alternatives,
         waypoints: waypoints
       });
-
-      // 有料道路の有無を推定（有料を許可しているモードのときだけ）。
-      // 「有料回避ルート」の距離と比べ、現ルートが明確に短ければ有料利用とみなす。
-      if (detectToll && routes.length) {
-        var noTollDist = null;
-        try {
-          var noToll = findRoutes_(origin, dest, {
-            avoidHighways: avoidHighways,
-            avoidTolls: true,
-            alternatives: false,
-            waypoints: waypoints
-          });
-          if (noToll.length) noTollDist = noToll[0].distance;
-        } catch (err) { /* 有料回避ルートが取れない場合は判定をスキップ */ }
-
-        if (noTollDist != null) {
-          routes.forEach(function (r) {
-            r.hasToll = r.distance < noTollDist * 0.97; // 3%以上短ければ有料利用と推定
-          });
-        }
-      }
 
       return json_({ ok: true, routes: routes });
     } catch (err) {
@@ -190,7 +168,9 @@ function findRoutes_(origin, dest, opt) {
       duration: duration,
       polyline: routePolyline_(route),
       summary: route.summary || '',
-      hasToll: false
+      // 有料道路の有無は Google 公式の警告情報（warnings）から判定する。
+      // 例：「この経路には有料道路が含まれています。」/ "This route has tolls."
+      hasToll: (route.warnings || []).some(function (w) { return /有料|toll/i.test(String(w)); })
     };
   });
 }
