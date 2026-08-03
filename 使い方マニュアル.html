@@ -219,7 +219,7 @@
   <div class="step"><div class="n">1</div><div class="b"><b>申請フォームを作る</b>：GASエディタで関数 <code>setupApplicationForm</code> を1回実行します。<b>お名前・学校名・役職</b>を尋ねるフォームと、申請者一覧の回答シートが自動で作られ、設定も自動保存されます（メールアドレスはログイン中のアカウントを自動で記録するので、書き間違い・なりすましがありません）。</div></div>
   <div class="step"><div class="n">2</div><div class="b"><b>管理者を登録する</b>：GASの「プロジェクトの設定 → スクリプト プロパティ」にキー <code>ADMIN_EMAILS</code>／値 メールアドレスを登録します（常に利用可）。</div></div>
   <div class="step"><div class="n">3</div><div class="b"><b>ドメインを限定する</b>：<code>RESTRICT_TO_DOMAINS</code> に学校アカウントのドメインを設定すると、そのドメイン以外は<b>申請していても利用できません</b>。</div></div>
-  <div class="step"><div class="n">4</div><div class="b"><code>ACCESS_CONTROL_ENABLED</code> が <code>true</code> であることを確認し、再デプロイします。職員には「アプリのURL」と「申請フォームのURL」を案内してください（未申請の人がアプリを開くと、申請フォームへのボタンが表示されます）。</div></div>
+  <div class="step"><div class="n">4</div><div class="b"><code>ACCESS_CONTROL_ENABLED</code> が <code>true</code> であることを確認し、再デプロイします。<b>職員に配るのはアプリのURLだけで十分です</b>——未申請の人が開くと、申請フォームへのボタンが自動で表示されるためです（フォームのURLを別に配る必要はありません）。</div></div>
   <div class="box tip"><div class="t">運用のポイント</div>
     申請は<b>フォームに回答が入った時点で自動的に有効</b>になります（反映は最大5分。急ぐときはGASで <code>clearAllowlistCache()</code> を実行）。
     管理者が1件ずつ承認する運用にしたい場合は、回答シートに「承認」列を作り <code>ALLOWLIST_APPROVED_HEADER</code> に列名を指定します。

@@ -276,12 +276,28 @@ function setupApplicationForm() {
   }, false);
   clearAllowlistCache();
 
+  var appUrl = '';
+  try { appUrl = ScriptApp.getService().getUrl() || ''; } catch (e) {}
+
   var msg =
     '✅ 申請フォームを作成し、設定も保存しました。\n\n' +
-    '■ 職員に案内するフォームURL：\n' + form.getPublishedUrl() + '\n\n' +
-    '■ 申請者の一覧（回答シート）：\n' + ss.getUrl() + '\n\n' +
-    '■ フォームの編集画面：\n' + form.getEditUrl() + '\n\n' +
-    'このあと「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイしてください。';
+    '───────────────────────────────\n' +
+    '■ 職員に配るのは「アプリのURL」だけでOKです\n' +
+    (appUrl ? appUrl : '（デプロイ後に「デプロイを管理」で表示されるURL）') + '\n' +
+    '  ※ 未申請の人が開くと、申請フォームへのボタンが自動で表示されます。\n' +
+    '───────────────────────────────\n\n' +
+    '■ 申請者の一覧（学校名・役職も確認できます）：\n' + ss.getUrl() + '\n\n' +
+    '■ 申請フォーム（内容を変えたいとき）：\n' + form.getEditUrl() + '\n' +
+    '   回答用URL：' + form.getPublishedUrl() + '\n\n' +
+    '■ このあとの手順：\n' +
+    '   「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイしてください。\n\n' +
+    '───────── 職員へのお知らせ文（コピーして使えます） ─────────\n' +
+    '【出張の距離計算ツールのご案内】\n' +
+    '自家用車出張の距離計算と、申請用の地図作成ができるツールです。\n' +
+    '下のURLを開き、画面の案内にしたがって利用申請をしてください。\n' +
+    '申請後、数分でご利用いただけます（学校のGoogleアカウントでログインした状態で開いてください）。\n' +
+    (appUrl ? appUrl : '（アプリのURL）') + '\n' +
+    '────────────────────────────────────────';
   console.log(msg);
   return msg;
 }
@@ -358,6 +374,14 @@ function denyPage_(gate) {
     ? '<p style="color:#666;font-size:13px;margin-top:18px;">ログイン中のアカウント：<b>' + gate.email + '</b></p>'
     : '';
 
+  // 未申請の人にとってはここが入口になるので、どんなツールかを簡単に紹介する
+  var intro = gate.reason === 'not-listed'
+    ? '<div style="background:#f5f9ff;border:1px solid #dbe4f3;border-radius:10px;padding:14px 16px;margin:16px 0;font-size:13.5px;line-height:1.8;color:#333;">' +
+      '自家用車で出張するときの<b>走行距離を自動で計算</b>し、通勤経路と重なる区間を差し引いて、' +
+      '出張申請の「用件」欄に貼り付ける文章と、提出用の地図を作成できます。' +
+      '</div>'
+    : '';
+
   var html =
     '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1.0"><title>利用申請のお願い</title></head>' +
@@ -366,7 +390,7 @@ function denyPage_(gate) {
     '<h1 style="font-size:21px;color:#0d47a1;margin:0 0 14px;">出張距離測定・申請ガイド</h1>' +
     '<p style="font-size:15px;line-height:1.8;margin:0 0 6px;">' + body + '</p>' +
     '<p style="font-size:14px;line-height:1.8;color:#444;margin:0;">' + (gate.message || '') + '</p>' +
-    applyBtn + extra + who +
+    intro + applyBtn + extra + who +
     '</div></body></html>';
 
   return HtmlService.createHtmlOutput(html)
