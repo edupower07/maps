@@ -64,18 +64,31 @@ var APP_HTML_URL = 'https://raw.githubusercontent.com/edupower07/maps/main/index
  *   4. ACCESS_CONTROL_ENABLED を true にする
  *   5. 「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイ
  * ※ 設定が空のまま true にすると誰も使えなくなるので、設定後に true にすること。
+ *
+ * 【重要：GASプロジェクトの所有者について】
+ * 利用者のメールアドレスを取得できるのは、次のどちらかの場合だけです。
+ *   ・GASの所有者と利用者が「同じドメイン」のアカウント（推奨）
+ *   ・デプロイの実行ユーザーを「ウェブアプリにアクセスしているユーザー」にした場合
+ * 個人のGmailアカウントでGASを作っていると、学校ドメイン(例 kita9.ed.jp)の
+ * 利用者のアドレスが取得できず、全員が「未登録」になってしまいます。
+ * その場合は、学校ドメインのアカウントでGASプロジェクトを作り直してください。
+ * 有効にする前に、必ず「?whoami=1」を職員のアカウントで開いて確認すること。
  */
-var ACCESS_CONTROL_ENABLED = false;   // ← 設定が済んだら true にする
+var ACCESS_CONTROL_ENABLED = true;    // false にすると誰でも使える（制限なし）
 
-var ADMIN_EMAILS = [                  // 管理者（常に利用可）
-  // 'admin@example.ed.jp'
-];
+// 管理者（常に利用可）。※このファイルはGitHubで公開されるため、
+// 個人のメールアドレスはここに直接書かず、GASの
+// 「プロジェクトの設定 → スクリプト プロパティ」に
+// キー ADMIN_EMAILS ／ 値 メールアドレス（カンマ区切り）で登録してください。
+var ADMIN_EMAILS = [];
 
 var ALLOWED_DOMAINS = [               // このドメインのアカウントは申請不要で許可
-  // 'example.ed.jp'
+  'kita9.ed.jp'                       // 北九州市の学校アカウント
 ];
 
-var ALLOWLIST_SHEET_ID = '';          // フォーム回答スプレッドシートのID
+// フォーム回答スプレッドシートのID。ドメイン許可だけで足りる場合は空のままでOK。
+// （スクリプト プロパティに ALLOWLIST_SHEET_ID を登録しても指定できます）
+var ALLOWLIST_SHEET_ID = '';
 var ALLOWLIST_SHEET_NAME = '';        // シート名（空なら先頭のシート）
 var ALLOWLIST_EMAIL_HEADER = 'メールアドレス';  // メールアドレスの列名（自動検出もします）
 var ALLOWLIST_APPROVED_HEADER = '';   // 空＝申請したら即利用可。列名を書くと、その列が
@@ -100,10 +113,10 @@ function checkAccess_() {
     return { ok: false, email: '', reason: 'no-identity',
              message: 'Googleアカウントが確認できませんでした。学校のGoogleアカウントでログインした状態で開いてください。' };
   }
-  if (ADMIN_EMAILS.map(lower_).indexOf(email) !== -1) return { ok: true, email: email };
+  if (configList_(ADMIN_EMAILS, 'ADMIN_EMAILS').indexOf(email) !== -1) return { ok: true, email: email };
 
   var domain = email.split('@')[1] || '';
-  if (ALLOWED_DOMAINS.map(lower_).indexOf(domain) !== -1) return { ok: true, email: email };
+  if (configList_(ALLOWED_DOMAINS, 'ALLOWED_DOMAINS').indexOf(domain) !== -1) return { ok: true, email: email };
 
   if (loadAllowlist_().indexOf(email) !== -1) return { ok: true, email: email };
 
@@ -113,6 +126,26 @@ function checkAccess_() {
 
 function lower_(s) { return String(s || '').trim().toLowerCase(); }
 
+// 設定値を「コード内の値」＋「スクリプト プロパティの値（カンマ区切り）」から作る。
+// 個人のメールアドレスなどを公開リポジトリに書かずに済むようにするための仕組み。
+function configList_(inCode, propKey) {
+  var list = (inCode || []).map(lower_);
+  try {
+    var raw = PropertiesService.getScriptProperties().getProperty(propKey);
+    if (raw) raw.split(',').forEach(function (v) { v = lower_(v); if (v) list.push(v); });
+  } catch (e) {}
+  return list;
+}
+
+// 許可リストのスプレッドシートID（スクリプト プロパティ優先）
+function allowlistSheetId_() {
+  try {
+    var v = PropertiesService.getScriptProperties().getProperty('ALLOWLIST_SHEET_ID');
+    if (v) return String(v).trim();
+  } catch (e) {}
+  return ALLOWLIST_SHEET_ID;
+}
+
 // 申請フォームの回答シートから、許可するメールアドレスの一覧を読み込む（一定時間キャッシュ）
 function loadAllowlist_() {
   var cache = CacheService.getScriptCache();
@@ -120,9 +153,10 @@ function loadAllowlist_() {
   if (hit) { try { return JSON.parse(hit); } catch (e) {} }
 
   var list = [];
-  if (ALLOWLIST_SHEET_ID) {
+  var sheetId = allowlistSheetId_();
+  if (sheetId) {
     try {
-      var ss = SpreadsheetApp.openById(ALLOWLIST_SHEET_ID);
+      var ss = SpreadsheetApp.openById(sheetId);
       var sh = ALLOWLIST_SHEET_NAME ? ss.getSheetByName(ALLOWLIST_SHEET_NAME) : ss.getSheets()[0];
       if (sh) list = parseAllowlistValues_(sh.getDataRange().getValues());
     } catch (err) {
@@ -244,6 +278,23 @@ function denyPage_(gate) {
 
 function doGet(e) {
   var p = (e && e.parameter) || {};
+
+  // ── 動作確認用：?whoami=1 で「自分のアカウントが認識されているか」を確認できる ──
+  // 利用制限を有効にする前に、これで職員のアカウントが取得できるか必ず確かめること。
+  // （表示されるのはアクセスした本人の情報だけなので安全です）
+  if (p.whoami === '1') {
+    var w = checkAccess_();
+    return json_({
+      ok: true,
+      email: currentUserEmail_() || '(取得できませんでした)',
+      allowed: w.ok,
+      reason: w.reason || null,
+      controlEnabled: ACCESS_CONTROL_ENABLED,
+      hint: currentUserEmail_()
+        ? 'アカウントを認識できています。allowed が true なら利用できます。'
+        : 'アカウントを認識できていません。GASプロジェクトの所有者と利用者のドメインが違う可能性があります（下の「所有者について」を確認してください）。'
+    });
+  }
 
   // ── APIリクエスト（ルート検索 / 住所・施設検索）はJSONを返す ──
   if (p.origin || p.dest || p.q || p.mode) {

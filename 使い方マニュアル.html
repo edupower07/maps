@@ -214,11 +214,18 @@
   <div class="step"><div class="n">2</div><div class="b"><b>URLを配布</b>：発行された exec URL（<code>https://script.google.com/macros/s/…/exec</code>）を開くとアプリ本体が表示されます。このURLをそのまま職員に配布してください（校務ポータルやGoogleサイトにリンクを置く運用がおすすめ）。</div></div>
   <div class="step"><div class="n">3</div><div class="b"><b>更新するとき</b>：<code>コード.gs</code> を更新した場合のみ「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイします（URLは変わりません）。画面側（index.html）の更新は自動で反映されます。</div></div>
   <h3>利用者を限定する（アクセス制御）</h3>
-  <p>URLが想定外に広がるのを防ぐため、Googleアカウント単位で利用者を限定できます。<b>申請者を1件ずつ手作業で追加する必要はありません。</b></p>
-  <div class="step"><div class="n">1</div><div class="b">利用申請用の<b>Googleフォーム</b>を作ります（「メールアドレスを収集する」をオン）。</div></div>
-  <div class="step"><div class="n">2</div><div class="b">回答をスプレッドシートに保存し、そのIDを <code>コード.gs</code> の <code>ALLOWLIST_SHEET_ID</code> に設定します。<b>フォームに申請が入った時点で自動的に利用可能</b>になります（反映は最大5分）。</div></div>
-  <div class="step"><div class="n">3</div><div class="b">同じ組織のドメインをまとめて許可したい場合は <code>ALLOWED_DOMAINS</code> に設定します（申請不要）。管理者が1件ずつ承認する運用にしたい場合は、回答シートに「承認」列を作り <code>ALLOWLIST_APPROVED_HEADER</code> に指定します。</div></div>
-  <div class="step"><div class="n">4</div><div class="b"><code>ACCESS_CONTROL_ENABLED</code> を <code>true</code> にして再デプロイします。許可されていない人には「利用申請はこちら」の案内画面が表示されます。</div></div>
+  <p>URLが想定外に広がるのを防ぐため、Googleアカウント単位で利用者を限定できます。判定は
+    <b>①管理者 → ②許可ドメイン → ③申請フォームの回答</b> の順で行われ、当てはまらない人には案内画面が表示されます。</p>
+  <div class="step"><div class="n">1</div><div class="b"><b>ドメインで許可する（基本）</b>：<code>ALLOWED_DOMAINS</code> に学校アカウントのドメインを設定すると、そのドメインの職員は申請不要で利用でき、それ以外は自動的に遮断されます。</div></div>
+  <div class="step"><div class="n">2</div><div class="b"><b>管理者を登録する</b>：GASの「プロジェクトの設定 → スクリプト プロパティ」にキー <code>ADMIN_EMAILS</code>／値 メールアドレスを登録します（常に利用可）。</div></div>
+  <div class="step"><div class="n">3</div><div class="b"><b>ドメイン外の人にも使わせる場合</b>：利用申請用のGoogleフォーム（メールアドレス収集をオン）を作り、回答スプレッドシートのIDを <code>ALLOWLIST_SHEET_ID</code> に設定します。<b>申請が入った時点で自動的に利用可能</b>になり（反映は最大5分）、1件ずつ手作業で追加する必要はありません。管理者が承認する運用にしたい場合は、回答シートに「承認」列を作り <code>ALLOWLIST_APPROVED_HEADER</code> に指定します。</div></div>
+  <div class="step"><div class="n">4</div><div class="b"><code>ACCESS_CONTROL_ENABLED</code> を <code>true</code> にして再デプロイします。</div></div>
+  <div class="box warn"><div class="t">有効にする前に必ず確認</div>
+    利用者のメールアドレスを取得できるのは、<b>GASの所有者と利用者が同じドメイン</b>の場合だけです。
+    個人のGmailアカウントでGASを作っていると、学校ドメインの職員のアドレスが取得できず<b>全員が拒否</b>されてしまいます。<br>
+    デプロイ後、<b>職員のアカウントで</b> <code>&lt;アプリURL&gt;?whoami=1</code> を開き、メールアドレスが表示され
+    <code>allowed:true</code> になることを確認してください。表示されない場合は、学校ドメインのアカウントでGASを作り直します。
+  </div>
   <div class="box tip"><div class="t">さらに確実にするには</div>
     デプロイの「アクセスできるユーザー」を<b>組織内の全員</b>にすると、自治体外からのアクセスを完全に遮断できます（上記の設定と併用できます）。
   </div>
