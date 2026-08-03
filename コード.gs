@@ -49,21 +49,23 @@ var APP_HTML_URL = 'https://raw.githubusercontent.com/edupower07/maps/main/index
 /* ============================================================
  *  利用制限（アクセス制御）の設定
  * ============================================================
- * URLが無制限に広がるのを防ぐため、「Googleアカウントのメールアドレス」で
- * 利用者を制限できます。許可の判定は次の順で行います。
- *   ① ADMIN_EMAILS に入っている        → 許可
- *   ② ALLOWED_DOMAINS のドメイン       → 許可（例：市のGoogle Workspaceドメイン）
- *   ③ 申請フォームの回答シートに載っている → 許可（自動。手作業の追加は不要）
- * どれにも当てはまらない人には「利用申請はこちら」の案内を表示します。
+ * URLが無制限に広がるのを防ぐため、「利用申請をした人だけが使える」ようにします。
+ * 判定は次の順で行います。
+ *   ① RESTRICT_TO_DOMAINS 以外のドメイン → 拒否（申請があっても使えない）
+ *   ② ADMIN_EMAILS に入っている          → 許可
+ *   ③ AUTO_ALLOW_DOMAINS のドメイン      → 許可（申請不要にしたい場合のみ。通常は空）
+ *   ④ 申請フォームの回答シートに載っている  → 許可（自動。手作業の追加は不要）
+ * 当てはまらない人には「利用申請はこちら」の案内を表示します。
  *
  * 【使い始めるまでの手順】
- *   1. Googleフォームを作る（メールアドレスを収集する設定にする）
- *   2. フォームの回答をスプレッドシートに保存し、そのURLの
- *      /d/【ここがID】/edit の部分を ALLOWLIST_SHEET_ID に貼る
- *   3. APPLY_FORM_URL にフォームの公開URLを貼る
- *   4. ACCESS_CONTROL_ENABLED を true にする
- *   5. 「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイ
- * ※ 設定が空のまま true にすると誰も使えなくなるので、設定後に true にすること。
+ *   1. GASエディタで関数 setupApplicationForm を1回実行する
+ *      → 申請フォーム（名前・学校名・役職／メールは自動収集）と回答シートが
+ *        自動で作られ、必要な設定も自動で保存されます
+ *   2. 実行結果に表示される「申請フォームのURL」を職員に案内する
+ *   3. ACCESS_CONTROL_ENABLED が true になっていることを確認
+ *   4. 「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイ
+ * ※ 手動で作る場合は、回答シートのIDを ALLOWLIST_SHEET_ID、フォームURLを
+ *    APPLY_FORM_URL に設定してください（スクリプト プロパティでも可）。
  *
  * 【重要：GASプロジェクトの所有者について】
  * 利用者のメールアドレスを取得できるのは、次のどちらかの場合だけです。
@@ -82,9 +84,14 @@ var ACCESS_CONTROL_ENABLED = true;    // false にすると誰でも使える（
 // キー ADMIN_EMAILS ／ 値 メールアドレス（カンマ区切り）で登録してください。
 var ADMIN_EMAILS = [];
 
-var ALLOWED_DOMAINS = [               // このドメインのアカウントは申請不要で許可
-  'kita9.ed.jp'                       // 北九州市の学校アカウント
+// 利用できるドメインの限定。ここに書いたドメイン以外は、申請があっても利用できません。
+// （空にすると、ドメインによる制限をしません）
+var RESTRICT_TO_DOMAINS = [
+  'kita9.ed.jp'                       // 北九州市の学校アカウントのみ
 ];
+
+// 申請なしで許可するドメイン。通常は空にして、全員に申請してもらいます。
+var AUTO_ALLOW_DOMAINS = [];
 
 // フォーム回答スプレッドシートのID。ドメイン許可だけで足りる場合は空のままでOK。
 // （スクリプト プロパティに ALLOWLIST_SHEET_ID を登録しても指定できます）
@@ -113,11 +120,21 @@ function checkAccess_() {
     return { ok: false, email: '', reason: 'no-identity',
              message: 'Googleアカウントが確認できませんでした。学校のGoogleアカウントでログインした状態で開いてください。' };
   }
+  // ① 使えるドメインの限定（申請があってもドメイン外は許可しない）
+  var domain = email.split('@')[1] || '';
+  var restrict = configList_(RESTRICT_TO_DOMAINS, 'RESTRICT_TO_DOMAINS');
+  if (restrict.length && restrict.indexOf(domain) === -1) {
+    return { ok: false, email: email, reason: 'wrong-domain',
+             message: 'このアプリは ' + restrict.join(' / ') + ' のアカウント専用です。学校のGoogleアカウントでログインし直してください。' };
+  }
+
+  // ② 管理者
   if (configList_(ADMIN_EMAILS, 'ADMIN_EMAILS').indexOf(email) !== -1) return { ok: true, email: email };
 
-  var domain = email.split('@')[1] || '';
-  if (configList_(ALLOWED_DOMAINS, 'ALLOWED_DOMAINS').indexOf(domain) !== -1) return { ok: true, email: email };
+  // ③ 申請不要にしているドメイン（通常は空）
+  if (configList_(AUTO_ALLOW_DOMAINS, 'AUTO_ALLOW_DOMAINS').indexOf(domain) !== -1) return { ok: true, email: email };
 
+  // ④ 利用申請フォームの回答
   if (loadAllowlist_().indexOf(email) !== -1) return { ok: true, email: email };
 
   return { ok: false, email: email, reason: 'not-listed',
@@ -139,11 +156,19 @@ function configList_(inCode, propKey) {
 
 // 許可リストのスプレッドシートID（スクリプト プロパティ優先）
 function allowlistSheetId_() {
+  return prop_('ALLOWLIST_SHEET_ID') || ALLOWLIST_SHEET_ID;
+}
+
+// 申請フォームのURL（スクリプト プロパティ優先）
+function applyFormUrl_() {
+  return prop_('APPLY_FORM_URL') || APPLY_FORM_URL;
+}
+
+function prop_(key) {
   try {
-    var v = PropertiesService.getScriptProperties().getProperty('ALLOWLIST_SHEET_ID');
-    if (v) return String(v).trim();
-  } catch (e) {}
-  return ALLOWLIST_SHEET_ID;
+    var v = PropertiesService.getScriptProperties().getProperty(key);
+    return v ? String(v).trim() : '';
+  } catch (e) { return ''; }
 }
 
 // 申請フォームの回答シートから、許可するメールアドレスの一覧を読み込む（一定時間キャッシュ）
@@ -209,6 +234,66 @@ function clearAllowlistCache() {
   return '許可リストのキャッシュを消去しました（次のアクセスで最新が反映されます）';
 }
 
+/**
+ * 【最初に1回だけ実行】利用申請フォームと回答シートを自動で作成する。
+ * GASエディタで関数一覧から setupApplicationForm を選んで実行してください。
+ * 作成されるもの：
+ *   ・Googleフォーム（お名前／学校名／役職。メールアドレスは自動収集）
+ *   ・回答スプレッドシート
+ *   ・スクリプト プロパティへの設定保存（ALLOWLIST_SHEET_ID / APPLY_FORM_URL）
+ * 実行後、表示された「申請フォームのURL」を職員に案内してください。
+ */
+function setupApplicationForm() {
+  var existing = applyFormUrl_();
+  if (existing) {
+    return '既に申請フォームが設定されています：' + existing +
+           '\n作り直す場合は、スクリプト プロパティの APPLY_FORM_URL と ALLOWLIST_SHEET_ID を削除してから再実行してください。';
+  }
+
+  var form = FormApp.create('出張距離測定・申請ガイド　利用申請');
+  form.setDescription(
+    'このツールは、申請いただいた方のアカウントでのみ利用できます。\n' +
+    '学校のGoogleアカウントでログインした状態でご記入ください。\n' +
+    '※ ご記入いただいたアカウントで、申請後 数分以内に利用できるようになります。'
+  );
+  // 回答者のメールアドレスを自動で記録する（本人のアカウントと確実に一致させるため）
+  try { form.setCollectEmail(true); } catch (e) {
+    try { form.setEmailCollectionType(FormApp.EmailCollectionType.VERIFIED); } catch (e2) {}
+  }
+  form.addTextItem().setTitle('お名前').setRequired(true);
+  form.addTextItem().setTitle('学校名').setRequired(true);
+  form.addTextItem().setTitle('役職').setRequired(true);
+  form.setConfirmationMessage(
+    '申請ありがとうございました。\n数分後にアプリのURLを開くとご利用いただけます。'
+  );
+
+  var ss = SpreadsheetApp.create('出張距離測定・申請ガイド　利用申請（回答）');
+  form.setDestination(FormApp.DestinationType.SPREADSHEET, ss.getId());
+
+  PropertiesService.getScriptProperties().setProperties({
+    APPLY_FORM_URL: form.getPublishedUrl(),
+    ALLOWLIST_SHEET_ID: ss.getId()
+  }, false);
+  clearAllowlistCache();
+
+  var msg =
+    '✅ 申請フォームを作成し、設定も保存しました。\n\n' +
+    '■ 職員に案内するフォームURL：\n' + form.getPublishedUrl() + '\n\n' +
+    '■ 申請者の一覧（回答シート）：\n' + ss.getUrl() + '\n\n' +
+    '■ フォームの編集画面：\n' + form.getEditUrl() + '\n\n' +
+    'このあと「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイしてください。';
+  console.log(msg);
+  return msg;
+}
+
+/** 【管理者向け】いま利用できる人の一覧を確認する */
+function listRegisteredUsers() {
+  var list = loadAllowlist_();
+  var msg = '利用登録されているアカウント：' + list.length + '件\n' + list.join('\n');
+  console.log(msg);
+  return msg;
+}
+
 // ===== 画面表示後の通信を認証するための署名付きトークン =====
 // 最初のページ表示のときだけ本人確認ができるため、そこで短時間有効の
 // トークンを発行し、以降のデータ取得（アプリ本体・ルート検索）で検証する。
@@ -248,17 +333,30 @@ function gateRequest_(p) {
 
 // 未登録の人に見せる案内画面
 function denyPage_(gate) {
-  var applyBtn = APPLY_FORM_URL
-    ? '<p style="margin-top:22px;"><a href="' + APPLY_FORM_URL + '" target="_blank" ' +
+  var formUrl = applyFormUrl_();
+  var canApply = gate.reason === 'not-listed' && formUrl;
+
+  var body, extra = '';
+  if (gate.reason === 'wrong-domain') {
+    body = 'ご利用には学校のGoogleアカウントが必要です。';
+    extra = '<p style="font-size:13px;color:#666;">ブラウザで別のアカウントにログインしている場合は、学校のアカウントに切り替えてから開き直してください。</p>';
+  } else if (gate.reason === 'no-identity') {
+    body = 'Googleアカウントが確認できませんでした。';
+    extra = '<p style="font-size:13px;color:#666;">学校のGoogleアカウントでログインした状態で開き直してください。</p>';
+  } else {
+    body = 'このアプリは<b>利用申請をされた方のみ</b>ご利用いただけます。';
+    extra = '<p style="font-size:13px;color:#666;">申請後、数分（最大5分ほど）してから開き直すと利用できるようになります。</p>';
+  }
+
+  var applyBtn = canApply
+    ? '<p style="margin-top:22px;"><a href="' + formUrl + '" target="_blank" ' +
       'style="display:inline-block;background:#1a73e8;color:#fff;text-decoration:none;padding:13px 26px;border-radius:8px;font-weight:700;">' +
-      '利用を申請する（フォームへ）</a></p>'
+      '利用を申請する（フォームへ）</a></p>' +
+      '<p style="font-size:12px;color:#888;margin-top:6px;">お名前・学校名・役職をご記入ください。申請いただいたアカウントでのみ利用できます。</p>'
     : '';
   var who = gate.email
-    ? '<p style="color:#666;font-size:13px;">ログイン中のアカウント：<b>' + gate.email + '</b></p>'
+    ? '<p style="color:#666;font-size:13px;margin-top:18px;">ログイン中のアカウント：<b>' + gate.email + '</b></p>'
     : '';
-  var extra = gate.reason === 'no-identity'
-    ? '<p style="font-size:13px;color:#666;">別のアカウントでログインしている場合は、学校のアカウントに切り替えてからもう一度開いてください。</p>'
-    : '<p style="font-size:13px;color:#666;">申請後、しばらく（最大5分ほど）してから開き直すと利用できるようになります。</p>';
 
   var html =
     '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
@@ -266,8 +364,8 @@ function denyPage_(gate) {
     '<body style="margin:0;font-family:\'Segoe UI\',\'Yu Gothic UI\',Meiryo,sans-serif;background:#f0f2f5;">' +
     '<div style="max-width:560px;margin:8vh auto;background:#fff;border-radius:14px;padding:34px 30px;box-shadow:0 4px 18px rgba(0,0,0,.1);">' +
     '<h1 style="font-size:21px;color:#0d47a1;margin:0 0 14px;">出張距離測定・申請ガイド</h1>' +
-    '<p style="font-size:15px;line-height:1.8;margin:0 0 6px;">' + (gate.message || '利用が許可されていません。') + '</p>' +
-    '<p style="font-size:15px;line-height:1.8;">ご利用を希望される方は、下のフォームから申請してください。</p>' +
+    '<p style="font-size:15px;line-height:1.8;margin:0 0 6px;">' + body + '</p>' +
+    '<p style="font-size:14px;line-height:1.8;color:#444;margin:0;">' + (gate.message || '') + '</p>' +
     applyBtn + extra + who +
     '</div></body></html>';
 
