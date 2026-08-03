@@ -213,6 +213,15 @@
   <div class="step"><div class="n">1</div><div class="b"><b>Google Apps Script（GAS）にデプロイ</b>：<code>コード.gs</code> を GAS プロジェクトに貼り付け、「ウェブアプリ」としてデプロイします（実行＝自分／アクセス＝全員）。Google Cloud のAPIキーや課金設定は不要です。</div></div>
   <div class="step"><div class="n">2</div><div class="b"><b>URLを配布</b>：発行された exec URL（<code>https://script.google.com/macros/s/…/exec</code>）を開くとアプリ本体が表示されます。このURLをそのまま職員に配布してください（校務ポータルやGoogleサイトにリンクを置く運用がおすすめ）。</div></div>
   <div class="step"><div class="n">3</div><div class="b"><b>更新するとき</b>：<code>コード.gs</code> を更新した場合のみ「デプロイ → デプロイを管理 → 鉛筆 → 新バージョン」で再デプロイします（URLは変わりません）。画面側（index.html）の更新は自動で反映されます。</div></div>
+  <h3>利用者を限定する（アクセス制御）</h3>
+  <p>URLが想定外に広がるのを防ぐため、Googleアカウント単位で利用者を限定できます。<b>申請者を1件ずつ手作業で追加する必要はありません。</b></p>
+  <div class="step"><div class="n">1</div><div class="b">利用申請用の<b>Googleフォーム</b>を作ります（「メールアドレスを収集する」をオン）。</div></div>
+  <div class="step"><div class="n">2</div><div class="b">回答をスプレッドシートに保存し、そのIDを <code>コード.gs</code> の <code>ALLOWLIST_SHEET_ID</code> に設定します。<b>フォームに申請が入った時点で自動的に利用可能</b>になります（反映は最大5分）。</div></div>
+  <div class="step"><div class="n">3</div><div class="b">同じ組織のドメインをまとめて許可したい場合は <code>ALLOWED_DOMAINS</code> に設定します（申請不要）。管理者が1件ずつ承認する運用にしたい場合は、回答シートに「承認」列を作り <code>ALLOWLIST_APPROVED_HEADER</code> に指定します。</div></div>
+  <div class="step"><div class="n">4</div><div class="b"><code>ACCESS_CONTROL_ENABLED</code> を <code>true</code> にして再デプロイします。許可されていない人には「利用申請はこちら」の案内画面が表示されます。</div></div>
+  <div class="box tip"><div class="t">さらに確実にするには</div>
+    デプロイの「アクセスできるユーザー」を<b>組織内の全員</b>にすると、自治体外からのアクセスを完全に遮断できます（上記の設定と併用できます）。
+  </div>
   <ul>
     <li>必要な通信先：<code>script.google.com</code>（ルート/住所検索・アプリ配信）、<code>openstreetmap.org</code>（地図タイル）、<code>unpkg.com</code>（地図ライブラリ）、<code>gsi.go.jp</code>（住所検索）。校内ネットワークでこれらが許可されている必要があります。</li>
     <li>利用者の個人データ（自宅住所・通勤ルート等）は各自のブラウザ内にのみ保存され、管理者側にも収集されません。</li>

@@ -754,7 +754,11 @@ let savedDests = JSON.parse(localStorage.getItem('saved-dests') || '[]');
 // コード.gs をデプロイして発行された「ウェブアプリURL」をここに貼り付けてください。
 //   例: 'https://script.google.com/macros/s/AKfycbxXXXXXXXXXXXX/exec'
 // 未設定の場合は、ルート検索が直線距離×1.3の推定値にフォールバックします。
-const GAS_API_URL = 'https://script.google.com/macros/s/AKfycbyzE_RzZqLbA5_z4AaACwpWB_4EK4XqSwKxvffdjsqtKVlVF9hFntwsYdJZJUnIeXCK/exec';
+// GASから配信されている場合は、そのGAS自身のURLを使う（学校ごとに別のGASを
+// 立てたとき、各自のGASに通信が向くようにするため）。直接HTMLを開いたときは下の値を使う。
+const GAS_API_URL = (typeof window !== 'undefined' && window.__GAS_URL)
+  ? window.__GAS_URL
+  : 'https://script.google.com/macros/s/AKfycbyzE_RzZqLbA5_z4AaACwpWB_4EK4XqSwKxvffdjsqtKVlVF9hFntwsYdJZJUnIeXCK/exec';
 // ▲▲▲ ここまで ▲▲▲
 
 // 確定・保存された通勤ルート（自宅↔学校）。{ home, school, geometry, distanceKm, method }
@@ -919,7 +923,8 @@ function formatAddress(item) {
 // Googleジオコーダ（GAS経由・APIキー不要）。住所精度が高い。施設名も今より当たりやすい。
 async function gasGeocode(query) {
   if (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0) return [];
-  const url = GAS_API_URL + '?mode=geocode&q=' + encodeURIComponent(query);
+  const url = GAS_API_URL + '?mode=geocode&q=' + encodeURIComponent(query) +
+    (window.__APP_TOKEN ? '&t=' + encodeURIComponent(window.__APP_TOKEN) : '');
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Google(GAS) HTTP ${res.status}`);
   const data = await res.json();
@@ -1929,12 +1934,18 @@ async function gasFetchRoutes(points, costing, wantAlternatives) {
   if (vias.length) {
     params.set('waypoints', vias.map(v => `${v.lat},${v.lng}`).join('|'));
   }
+  // 利用制限がかかっている場合の合言葉（画面を開いたときにGASが埋め込む）
+  if (window.__APP_TOKEN) params.set('t', window.__APP_TOKEN);
 
   // 単純GET（カスタムヘッダを付けず、CORSプリフライトを避ける）
   const res = await fetch(GAS_API_URL + '?' + params.toString());
   if (!res.ok) throw new Error(`GAS HTTP ${res.status}`);
   const data = await res.json();
-  if (!data.ok) throw new Error(data.error || 'GASエラー');
+  if (!data.ok) {
+    // 利用確認の期限切れ（12時間）などのときは、開き直せば直ることを伝える
+    if (data.denied) showToast('利用の確認が切れました。ページを再読み込みしてください');
+    throw new Error(data.error || 'GASエラー');
+  }
   if (!data.routes || !data.routes.length) throw new Error('GAS: ルートなし');
 
   return data.routes.map(r => ({
