@@ -466,6 +466,13 @@ body { font-family: 'Segoe UI', 'Yu Gothic UI', 'Meiryo', sans-serif; background
    同じ幅・高さで組む。こうしないと地図の収まり（fitBounds）が印刷時とズレて見切れる。 */
 body.printing #print-maps-container { display: block; width: 186mm; margin: 0 auto; }
 
+/* スマホ・タブレット：地図を上、操作パネルを下の縦並びにする */
+@media (max-width: 768px) {
+  .tab-content.active { flex-direction: column; height: auto; }
+  .map-area { order: -1; height: 45vh; min-height: 300px; }
+  .sidebar { width: 100%; min-width: 0; }
+}
+
 @media print {
   body { background: white; }
   body > .header, body > .tabs, body > .tab-content, body > .map-click-hint,
@@ -483,7 +490,7 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
 <div class="header">
   <svg width="28" height="28" viewBox="0 0 24 24" fill="white"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
   <h1>出張距離測定・申請ガイド</h1>
-  <span class="subtitle">v2 ─ Googleマップルート採用・APIキー不要</span>
+  <span class="subtitle">v2.1 ─ Googleマップルート採用・APIキー不要</span>
 </div>
 
 <div class="tabs">
@@ -723,10 +730,18 @@ body.printing #print-maps-container { display: block; width: 186mm; margin: 0 au
       直行・直帰の場合、出張経路のうち通勤経路と重複する区間は距離から差し引きます。<br>
       このアプリでは、各区間の距離を自動計算し、重複区間の推定値を表示します。<br><br>
       <strong>重複区間の判定方法：</strong><br>
-      出張経路と通勤経路を約25m間隔の点に分けて比較し、通勤経路から約45m以内を通る部分を「重複」と判定します
-      （120m未満の途切れは同じ重複としてつなぎ、60m未満の断片はノイズとして除外）。<br>
+      出張経路と通勤経路を約25m間隔の点に分けて比較し、通勤経路から約45m以内 かつ 進行方向がほぼ平行の部分を「重複」と判定します
+      （120m未満の途切れは同じ重複としてつなぎ、60m未満の断片はノイズとして除外。通勤経路をただ横切るだけの交差点は重複になりません）。<br>
       上下線が分かれた道路などでは多少の誤差が出ることがあります。実際と違う場合は、計算結果の
       「✂ 重複区間（除算）の調整」でON/OFFを切り替えてください。
+    </div>
+
+    <div style="margin-top:30px;border-top:1px solid #ddd;padding-top:16px;">
+      <button class="btn btn-danger btn-sm" onclick="resetAllData()">🗑 保存データをすべて消去（初期化）</button>
+      <div style="font-size:12px;color:#888;margin-top:6px;">
+        自宅・学校・通勤ルート・保存した用務地を、この端末のブラウザから削除します（他の人には影響しません）。
+        動きがおかしいときの最終手段としてお使いください。
+      </div>
     </div>
   </div>
 </div>
@@ -769,12 +784,9 @@ let commuteEditMode = false;      // 通勤ルートを経由地で手動調整�
 let commuteEdit = null;           // { vias:[{lat,lng}], costing, route }
 let commuteViaMarkers = [];       // 手動調整中の経由地マーカー
 
-// 初期登録する用務地（初回起動時にブラウザ側でジオコーディングして保存）
-const DEFAULT_DESTS = [
-  { name: '小倉北区役所', address: '北九州市小倉北区大手町1-1' },
-  { name: '北九州市立教育センター', address: '北九州市八幡西区相生町20-1' },
-  { name: 'ウェルとばた', address: '北九州市戸畑区汐井町1-6' }
-];
+// ※ 以前あった「初期用務地の自動登録」は廃止。
+//   新しく開いた人ごとに住所検索（API枠）を消費してしまうため、
+//   全市展開では各自が⭐ボタンでよく使う用務地を保存する方式に統一した。
 
 const COLORS = {
   home: '#ea4335',
@@ -794,6 +806,9 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
   attribution: '&copy; OpenStreetMap contributors',
   maxZoom: 19
 }).addTo(map);
+
+// 画面サイズが変わったとき（スマホの回転・ウィンドウ変更）に地図を描き直す
+window.addEventListener('resize', () => setTimeout(() => map.invalidateSize(), 200));
 
 loadSavedLocations();
 renderSavedDests();
@@ -1450,10 +1465,12 @@ async function setupCommute() {
   showLoading(true, '通勤ルートを検索中…');
   try {
     routeCache.clear();
-    const variants = [];
-    // 高速ありルート（代替含む）と高速回避ルートを集める
-    try { (await gasFetchRoutes([locations.home, locations.school], 'highway', true)).forEach(v => variants.push(v)); } catch (e) { console.warn('[通勤 highway]', e.message); }
-    try { (await gasFetchRoutes([locations.home, locations.school], 'nohighway', false)).forEach(v => variants.push(v)); } catch (e) { console.warn('[通勤 nohighway]', e.message); }
+    // 高速ありルート（代替含む）と高速回避ルートを並列で集める
+    const [hw, nohw] = await Promise.all([
+      gasFetchRoutes([locations.home, locations.school], 'highway', true).catch(e => { console.warn('[通勤 highway]', e.message); return []; }),
+      gasFetchRoutes([locations.home, locations.school], 'nohighway', false).catch(e => { console.warn('[通勤 nohighway]', e.message); return []; })
+    ]);
+    const variants = [...hw, ...nohw];
 
     if (!variants.length) {
       // GASに繋がらないときは直線で確定（推定）
@@ -1470,7 +1487,8 @@ async function setupCommute() {
     window._commuteVariants = uniq;
 
     choicesEl.innerHTML = '<div style="font-size:12px;font-weight:600;color:#1a73e8;margin:8px 0 6px;">いつも使う通勤ルートを選んでください：</div>' +
-      '<div style="font-size:11px;color:#e65100;font-weight:600;margin-bottom:6px;">🟠 地図のオレンジ色の線＝いま見ている候補です</div>' +
+      '<div style="font-size:11px;color:#e65100;font-weight:600;margin-bottom:4px;">🟠 地図のオレンジ色の線＝いま見ている候補です</div>' +
+      '<div style="margin-bottom:6px;"><a href="' + gmapsDirUrl([locations.home, locations.school]) + '" target="_blank" rel="noopener" style="font-size:11px;color:#1a73e8;">🗺 Googleマップでも同じ区間（自宅↔学校）を見てみる</a></div>' +
       uniq.map((v, i) => {
         const lab = commuteRouteLabel(v, i === 0);
         return `<div class="location-card" style="cursor:pointer;" onmouseover="previewCommuteVariant(${i})" onclick="chooseCommute(${i})">
@@ -1755,10 +1773,11 @@ function densifyCoords(coords, stepMeters) {
   return out;
 }
 
-// 通勤経路の点を約120mのマス目に登録し、近くのマスにある線分だけ距離計算する（高速化）
-function minDistToPathGrid(ptXY, pathXY, grid, cell) {
+// 通勤経路の点を約120mのマス目に登録し、近くのマスにある線分だけ距離計算する（高速化）。
+// 最も近い線分の番号も返す（進行方向の平行判定に使う）。
+function nearestOnPathGrid(ptXY, pathXY, grid, cell) {
   const ix = Math.floor(ptXY[0] / cell), iy = Math.floor(ptXY[1] / cell);
-  let min = Infinity;
+  let min = Infinity, seg = -1;
   const checked = new Set();
   for (let dx = -1; dx <= 1; dx++) {
     for (let dy = -1; dy <= 1; dy++) {
@@ -1769,17 +1788,18 @@ function minDistToPathGrid(ptXY, pathXY, grid, cell) {
           if (s < 0 || s >= pathXY.length - 1 || checked.has(s)) continue;
           checked.add(s);
           const d = distPointToSeg(ptXY, pathXY[s], pathXY[s + 1]);
-          if (d < min) min = d;
+          if (d < min) { min = d; seg = s; }
         }
       }
     }
   }
-  return min;
+  return { d: min, seg };
 }
 
 // legGeometry と commuteGeometry の重なる区間を返す（GeoJSON LineString）。
-// 手順：両ルートを約25m間隔に補間 → 通勤経路から45m以内の点を「重複」と判定
+// 手順：両ルートを約25m間隔に補間 → 通勤経路から45m以内 かつ 進行方向がほぼ平行の点を「重複」と判定
 //       → 120m未満の途切れはつなぎ、60m未満の断片は捨てる（分離帯・簡略化誤差への耐性）
+// 向きの条件により、通勤経路をただ横切るだけの交差点付近を重複と誤検出しない。
 function computeOverlap(legGeometry, commuteGeometry, thresholdMeters) {
   const threshold = thresholdMeters || 45;
   const rawLeg = legGeometry && legGeometry.coordinates;
@@ -1804,7 +1824,23 @@ function computeOverlap(legGeometry, commuteGeometry, thresholdMeters) {
     grid.get(key).push(i);
   });
 
-  const flags = legXY.map(p => minDistToPathGrid(p, comXY, grid, cell) <= threshold);
+  // 通勤経路の各線分の向き
+  const comBearing = [];
+  for (let i = 0; i < comXY.length - 1; i++) {
+    comBearing.push(Math.atan2(comXY[i + 1][1] - comXY[i][1], comXY[i + 1][0] - comXY[i][0]));
+  }
+
+  // 「近い」だけでなく「向きがほぼ平行（同方向・逆方向どちらでも可）」のときだけ同じ道とみなす
+  const MAX_ANGLE = 35 * Math.PI / 180;
+  const flags = legXY.map((p, i) => {
+    const near = nearestOnPathGrid(p, comXY, grid, cell);
+    if (near.d > threshold || near.seg < 0) return false;
+    const a = legXY[Math.max(0, i - 1)], b = legXY[Math.min(legXY.length - 1, i + 1)];
+    const legB = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    let diff = Math.abs(legB - comBearing[near.seg]) % (2 * Math.PI);
+    if (diff > Math.PI) diff = 2 * Math.PI - diff;
+    return diff <= MAX_ANGLE || diff >= Math.PI - MAX_ANGLE;
+  });
 
   // ルートに沿った累積距離
   const cum = [0];
@@ -1896,7 +1932,8 @@ function decodePolyline(encoded, precision) {
   return coords;
 }
 
-// ルートキャッシュ（1回の計算中、同じOD＋costingは1回だけ取得）
+// ルートキャッシュ（1回の計算中、同じOD＋costingは1回だけ取得）。
+// 取得中のPromiseを保存するため、並列で同じ区間を要求しても二重取得にならない。
 let routeCache = new Map();
 function routeKey(from, to, costing) {
   return `${from.lat.toFixed(6)},${from.lng.toFixed(6)};${to.lat.toFixed(6)},${to.lng.toFixed(6)};${costing}`;
@@ -1984,25 +2021,8 @@ async function getRouteVia(points, costing, altIndex) {
   return straightConcat(points);
 }
 
-// costing: 'highway'（高速優先）/ 'nohighway'（一般道）。altIndex: 0=最短, 1=代替ルート
-async function getRoute(from, to, costing, altIndex) {
-  costing = costing || 'highway';
-  altIndex = altIndex || 0;
-  if (gasAvailable) {
-    const key = routeKey(from, to, costing);
-    let variants = routeCache.get(key);
-    if (!variants) {
-      try {
-        variants = await gasFetchRoutes([from, to], costing, true);
-        routeCache.set(key, variants);
-      } catch (e) {
-        console.warn('[GAS] 失敗、直線距離にフォールバック:', e.message);
-        gasAvailable = false;
-      }
-    }
-    if (variants) return variants[Math.min(altIndex, variants.length - 1)];
-  }
-  // 最終フォールバック：直線距離×1.3（GASに接続できないとき）
+// 直線距離×1.3の最終フォールバック（GASに接続できないとき）
+function straightRoute_(from, to) {
   return {
     distance: haversineDistance(from, to) * 1.3,
     duration: 0,
@@ -2010,6 +2030,29 @@ async function getRoute(from, to, costing, altIndex) {
     hasToll: false,
     method: 'straight'
   };
+}
+
+// costing: 'highway'（高速優先）/ 'nohighway'（一般道）。altIndex: 0=最短, 1=代替ルート
+async function getRoute(from, to, costing, altIndex) {
+  costing = costing || 'highway';
+  altIndex = altIndex || 0;
+  if (!gasAvailable) return straightRoute_(from, to);
+
+  const key = routeKey(from, to, costing);
+  let p = routeCache.get(key);
+  if (!p) {
+    p = gasFetchRoutes([from, to], costing, true);
+    routeCache.set(key, p);   // Promiseを保存＝並列要求でも取得は1回だけ
+  }
+  try {
+    const variants = await p;
+    return variants[Math.min(altIndex, variants.length - 1)];
+  } catch (e) {
+    console.warn('[GAS] 失敗、直線距離にフォールバック:', e.message);
+    routeCache.delete(key);
+    gasAvailable = false;
+    return straightRoute_(from, to);
+  }
 }
 
 function clearRoutes() {
@@ -2241,11 +2284,16 @@ async function buildPattern(costing, altIndex) {
   // 出発地 → 用務地1 → 用務地2 → … → 到着地 のノード列
   const nodes = [{ kind: plan.start }, ...destStops.map((s, i) => ({ kind: 'stop', i })), { kind: plan.end }];
 
+  // 全区間を並列で取得（キャッシュがPromiseなので二重取得にはならない）
+  const routes = await Promise.all(
+    nodes.slice(0, -1).map((a, k) => getRoute(nodeCoord(a), nodeCoord(nodes[k + 1]), costing, altIndex))
+  );
+
   const legs = [];
   for (let k = 0; k < nodes.length - 1; k++) {
     const a = nodes[k], b = nodes[k + 1];
     const isFirst = k === 0, isLast = k === nodes.length - 2;
-    const route = await getRoute(nodeCoord(a), nodeCoord(b), costing, altIndex);
+    const route = routes[k];
     legs.push({
       fromNode: a, toNode: b,
       color: isFirst ? '#1a73e8' : (isLast ? '#ea4335' : '#34a853'),
@@ -2318,12 +2366,18 @@ async function calculateRoute() {
       // 直線フォールバック時は候補比較できない（1ルートのみ）
       candidates = [{ costing: 'highway', alt: 0, data: first }];
     } else {
-      const specs = [['highway', 0], ['highway', 1], ['nohighway', 0], ['nohighway', 1]];
-      candidates = [];
-      for (const [costing, alt] of specs) {
-        const data = (costing === 'highway' && alt === 0) ? first : await buildPattern(costing, alt);
-        candidates.push({ costing, alt, data });
-      }
+      // 残り3候補は並列で作る（同じ区間の取得はキャッシュで共有される）
+      const [h1, n0, n1] = await Promise.all([
+        buildPattern('highway', 1),
+        buildPattern('nohighway', 0),
+        buildPattern('nohighway', 1)
+      ]);
+      candidates = [
+        { costing: 'highway', alt: 0, data: first },
+        { costing: 'highway', alt: 1, data: h1 },
+        { costing: 'nohighway', alt: 0, data: n0 },
+        { costing: 'nohighway', alt: 1, data: n1 }
+      ];
       candidates = dedupeRouteCandidates(candidates);
     }
     labelCandidates(candidates);
@@ -2554,6 +2608,24 @@ function commuteMap(commuteRoute, dc) {
 function activeData() { return lastCalc.candidates[lastCalc.active].data; }
 function activeCand() { return lastCalc.candidates[lastCalc.active]; }
 
+// Googleマップで同じ区間を開くリンク（照合・確認用）。経由地は最大9か所まで付与。
+function gmapsDirUrl(points) {
+  if (!points || points.length < 2) return '#';
+  const o = points[0], d = points[points.length - 1];
+  const ws = points.slice(1, -1).slice(0, 9).map(p => `${p.lat},${p.lng}`).join('|');
+  return 'https://www.google.com/maps/dir/?api=1&travelmode=driving' +
+    '&origin=' + o.lat + ',' + o.lng +
+    '&destination=' + d.lat + ',' + d.lng +
+    (ws ? '&waypoints=' + encodeURIComponent(ws) : '');
+}
+
+// 行程全体（出発地→用務地…→到着地。手動の経由地も含む）の点列
+function tripPoints_(d) {
+  const pts = [nodeCoord(d.legs[0].fromNode)];
+  d.legs.forEach(l => { l.vias.forEach(v => pts.push(v)); pts.push(nodeCoord(l.toNode)); });
+  return pts;
+}
+
 // ルート候補＋手動調整パネル
 function renderCandidates() {
   const c = lastCalc;
@@ -2576,6 +2648,7 @@ function renderCandidates() {
       return `<div class="rc-option${active}" onclick="applyCandidate(${i})">
         <div class="rc-head">${icon} ${cand.label}</div>
         <div class="rc-metrics"><span class="rc-km">${cd.totalClaim.toFixed(1)} km</span><span class="rc-time">約 ${cd.durationMin} 分</span>${toll}</div>
+        <a href="${gmapsDirUrl(tripPoints_(cd))}" target="_blank" rel="noopener" onclick="event.stopPropagation()" style="font-size:11px;color:#1a73e8;">🗺 Googleマップで確認</a>
       </div>`;
     }).join('');
     html += `<div class="rc-title">🛣 ルートを選んでください（申請距離に反映されます）</div>
@@ -2671,7 +2744,8 @@ function renderResult() {
   } else {
     const label = c.canCompare ? activeCand().label : 'このルート';
     const mark = c.decided ? '✅ 決定：' : '未決定：';
-    html += `<div style="margin-top:8px;font-size:12px;color:#555;">${mark}<strong>${label}</strong>（約 ${d.durationMin} 分${d.hasToll ? '・有料道路あり' : ''}）${c.decided ? '' : '　※下のパネルで「決定」を押すと印刷できます'}</div>`;
+    html += `<div style="margin-top:8px;font-size:12px;color:#555;">${mark}<strong>${label}</strong>（約 ${d.durationMin} 分${d.hasToll ? '・有料道路あり' : ''}）${c.decided ? '' : '　※下のパネルで「決定」を押すと印刷できます'}
+      　<a href="${gmapsDirUrl(tripPoints_(d))}" target="_blank" rel="noopener" style="color:#1a73e8;">🗺 Googleマップでこの行程を確認</a></div>`;
   }
 
   document.getElementById('result-details').innerHTML = html;
@@ -2906,32 +2980,20 @@ function loadDest(i) {
   addStop(d.lat, d.lng, d.address);
 }
 
-// 初期用務地を初回のみブラウザ側でジオコーディングして登録
-async function ensureDefaultDests() {
-  let changed = false;
-  for (const def of DEFAULT_DESTS) {
-    if (savedDests.some(d => d.name === def.name)) continue;
-    let cands = [];
-    try { cands = await combinedSearchSmart(def.address); } catch {}
-    if (!cands.length) {
-      try { cands = await combinedSearchSmart(def.name); } catch {}
-    }
-    if (cands.length) {
-      const c = cands[0];
-      savedDests.push({ name: def.name, lat: c.lat, lng: c.lng, address: def.address });
-      changed = true;
-    }
-  }
-  if (changed) {
-    localStorage.setItem('saved-dests', JSON.stringify(savedDests));
-    renderSavedDests();
-  }
-}
+// （廃止）初期用務地の自動登録。呼び出し互換のため空関数として残す。
+async function ensureDefaultDests() {}
 
 function removeDest(i) {
   savedDests.splice(i, 1);
   localStorage.setItem('saved-dests', JSON.stringify(savedDests));
   renderSavedDests();
+}
+
+// 保存データの初期化（この端末のブラウザ内のみ）
+function resetAllData() {
+  if (!confirm('自宅・学校・通勤ルート・保存した用務地をすべて消去します。よろしいですか？')) return;
+  ['saved-locations', 'saved-dests', 'commute-route'].forEach(k => localStorage.removeItem(k));
+  showToast('消去しました。ページを開き直すと初期状態になります');
 }
 
 document.querySelectorAll('.search-row input').forEach(input => {

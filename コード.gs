@@ -532,7 +532,13 @@ function findRoutes_(origin, dest, opt) {
   var finder = Maps.newDirectionFinder()
     .setOrigin(origin.lat, origin.lng)
     .setDestination(dest.lat, dest.lng)
-    .setMode(Maps.DirectionFinder.Mode.DRIVING);
+    .setMode(Maps.DirectionFinder.Mode.DRIVING)
+    // 道路名を日本語で返す（例: Route 1 → 国道1号）
+    .setLanguage('ja')
+    // 出発時刻を「今」にして交通状況を考慮させる。
+    // Googleマップのアプリ・サイトは常に交通状況込みでルートを提案するため、
+    // これを渡さないと提案ルートがGoogleマップの表示とズレる原因になる。
+    .setDepart(new Date(Date.now() + 60 * 1000));
 
   if (opt.alternatives)  finder.setAlternatives(true);
   if (opt.avoidHighways) finder.setAvoid(Maps.DirectionFinder.Avoid.HIGHWAYS);
