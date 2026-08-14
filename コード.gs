@@ -507,11 +507,39 @@ function bootstrapPage_(token) {
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0');
 }
 
+// キャッシュは1件あたり100KBまでのため、大きいHTMLは分割して保存する。
+// （分割しないとキャッシュできず、開くたびに毎回GitHubへ取りに行くことになる）
+var CACHE_CHUNK_CHARS = 30000;   // 日本語が多くても100KBに収まる余裕をもたせた文字数
+
+function cacheGetLarge_(cache, key) {
+  var n = Number(cache.get(key + ':n') || 0);
+  if (!n) return null;
+  var keys = [];
+  for (var i = 0; i < n; i++) keys.push(key + ':' + i);
+  var map = cache.getAll(keys);
+  var out = '';
+  for (var j = 0; j < n; j++) {
+    var part = map[key + ':' + j];
+    if (part == null) return null;   // 一部でも期限切れなら使わない
+    out += part;
+  }
+  return out;
+}
+
+function cachePutLarge_(cache, key, value, sec) {
+  var n = Math.ceil(value.length / CACHE_CHUNK_CHARS);
+  if (n > 30) return;                // 想定外に大きい場合はキャッシュしない
+  var obj = {};
+  for (var i = 0; i < n; i++) obj[key + ':' + i] = value.substr(i * CACHE_CHUNK_CHARS, CACHE_CHUNK_CHARS);
+  obj[key + ':n'] = String(n);
+  cache.putAll(obj, sec);
+}
+
 // index.html をネット経由で取得（Googleのサーバーが代行）。10分間キャッシュ。
 function fetchAppHtml_() {
   var cache = CacheService.getScriptCache();
-  var key = 'app-html-v1';
-  var cached = cache.get(key);
+  var key = 'app-html-v2';
+  var cached = cacheGetLarge_(cache, key);
   if (cached) return cached;
 
   var res = UrlFetchApp.fetch(APP_HTML_URL, { muteHttpExceptions: true, followRedirects: true });
@@ -520,9 +548,19 @@ function fetchAppHtml_() {
     throw new Error('アプリHTMLの取得に失敗しました（HTTP ' + code + '）。リポジトリがPublicか、URLが正しいか確認してください。');
   }
   var html = res.getContentText('UTF-8');
-  // CacheServiceは1項目100KBまで。超えるときはキャッシュせず毎回取得する。
-  try { if (html.length < 100000) cache.put(key, html, 600); } catch (e) {}
+  // 分割して保存するので、100KBを超えるHTMLでもキャッシュが効く
+  try { cachePutLarge_(cache, key, html, 600); } catch (e) {}
   return html;
+}
+
+/** アプリを更新した直後に、すぐ反映させたいときに手動実行する */
+function clearAppHtmlCache() {
+  var cache = CacheService.getScriptCache();
+  var n = Number(cache.get('app-html-v2:n') || 0);
+  var keys = ['app-html-v2:n'];
+  for (var i = 0; i < n; i++) keys.push('app-html-v2:' + i);
+  cache.removeAll(keys);
+  return 'アプリHTMLのキャッシュを消去しました（次のアクセスで最新が読み込まれます）';
 }
 
 /**
