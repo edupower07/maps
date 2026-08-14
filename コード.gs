@@ -426,34 +426,7 @@ function doGet(e) {
   if (p.origin || p.dest || p.q || p.mode) {
     var apiGate = gateRequest_(p);
     if (!apiGate.ok) return json_({ ok: false, error: apiGate.message, denied: true });
-    try {
-      // 住所・施設の検索（ジオコーディング）
-      if (p.mode === 'geocode' || p.q) {
-        return json_(geocode_(p.q));
-      }
-
-      var origin = parseLatLng_(p.origin);
-      var dest   = parseLatLng_(p.dest);
-      if (!origin || !dest) {
-        throw new Error('origin / dest が不正です（"緯度,経度" 形式で指定してください）');
-      }
-
-      var avoidHighways = p.avoidHighways === '1';
-      var avoidTolls    = p.avoidTolls === '1';
-      var alternatives  = p.alternatives === '1';
-      var waypoints     = parseWaypoints_(p.waypoints);
-
-      var routes = findRoutes_(origin, dest, {
-        avoidHighways: avoidHighways,
-        avoidTolls: avoidTolls,
-        alternatives: alternatives,
-        waypoints: waypoints
-      });
-
-      return json_({ ok: true, routes: routes });
-    } catch (err) {
-      return json_({ ok: false, error: String((err && err.message) || err) });
-    }
+    return json_(apiResult_(p));
   }
 
   // ── アプリ本体のHTMLを「テキスト」として返す（起動ページから読み込む用） ──
@@ -489,22 +462,63 @@ function doGet(e) {
   return bootstrapPage_(ACCESS_CONTROL_ENABLED ? makeToken_(gate.email) : '');
 }
 
-// 小さな起動ページ。アプリ本体(HTML)をテキストで取得し、ブラウザ自身に描画させる。
-// Apps Script の HTML 配信はこの小さなページだけなので壊れない。
+/**
+ * 【画面側から呼ばれる】アプリ本体のHTMLを返す。
+ * google.script.run 経由で呼ばれるため、ログイン情報が確実に伝わる。
+ */
+function getAppHtml() {
+  var gate = checkAccess_();
+  if (!gate.ok) throw new Error(gate.message || '利用が許可されていません。');
+  return fetchAppHtml_();
+}
+
+/**
+ * 【画面側から呼ばれる】ルート検索・住所検索。
+ * params は { origin, dest, waypoints, avoidHighways, ... } または { mode:'geocode', q }
+ */
+function apiCall(params) {
+  var gate = checkAccess_();
+  if (!gate.ok) return { ok: false, error: gate.message, denied: true };
+  return apiResult_(params || {});
+}
+
+// 小さな起動ページ。アプリ本体(HTML)を google.script.run で受け取り、
+// この画面の中に組み立てる。Apps Script の HTML 配信はこの小さなページだけなので壊れない。
 function bootstrapPage_(token) {
-  var self = ScriptApp.getService().getUrl();
-  var url = self + '?html=1' + (token ? '&t=' + encodeURIComponent(token) : '');
+  var self = '';
+  try { self = ScriptApp.getService().getUrl() || ''; } catch (e) {}
+
   var boot =
     '<!DOCTYPE html><html lang="ja"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width, initial-scale=1.0">' +
-    '<style>html,body{margin:0;height:100%;font-family:sans-serif}#msg{padding:20px;color:#555}</style>' +
-    '</head><body><div id="msg">読み込み中…</div>' +
+    '<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">' +
+    '<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"><\/script>' +
+    '<style>html,body{margin:0;height:100%;font-family:"Segoe UI","Yu Gothic UI",Meiryo,sans-serif}' +
+    '#boot-msg{padding:24px;color:#555;font-size:15px}</style>' +
+    '</head><body><div id="boot-msg">読み込み中…</div>' +
     '<script>' +
-    'fetch(' + JSON.stringify(url) + ')' +
-    '.then(function(r){return r.text();})' +
-    '.then(function(t){document.open();document.write(t);document.close();})' +
-    '.catch(function(e){document.getElementById("msg").textContent="読み込みに失敗しました: "+e;});' +
+    'window.__APP_TOKEN=' + JSON.stringify(token || '') + ';' +
+    'window.__GAS_URL=' + JSON.stringify(self) + ';' +
+    'window.__GAS_MODE=true;' +
+    'function bootFail(e){var m=document.getElementById("boot-msg");' +
+    'if(m)m.innerHTML="<b>読み込みに失敗しました</b><br>"+((e&&e.message)||e)+' +
+    '"<br><br>ページを再読み込みしてもうまくいかない場合は、学校のGoogleアカウントでログインしているかご確認ください。";}' +
+    'function bootRender(html){try{' +
+    // <style> を head へ移す
+    'var st=html.match(/<style[\\s\\S]*?<\\/style>/gi)||[];' +
+    'for(var i=0;i<st.length;i++){var w=document.createElement("div");w.innerHTML=st[i];' +
+    'if(w.firstChild)document.head.appendChild(w.firstChild);}' +
+    // <body> の中身を取り出し、スクリプトだけ分離
+    'var bm=html.match(/<body[^>]*>([\\s\\S]*)<\\/body>/i);var bh=bm?bm[1]:html;var sc=[];' +
+    'bh=bh.replace(/<script[\\s\\S]*?<\\/script>/gi,function(m){sc.push(m);return "";});' +
+    'document.body.innerHTML=bh;' +
+    // 分離したスクリプトを実行（この方法なら google.script.run が生き続ける）
+    'for(var j=0;j<sc.length;j++){var code=sc[j].replace(/^<script[^>]*>/i,"").replace(/<\\/script>$/i,"");' +
+    'var el=document.createElement("script");el.text=code;document.body.appendChild(el);}' +
+    '}catch(err){bootFail(err);}}' +
+    'google.script.run.withSuccessHandler(bootRender).withFailureHandler(bootFail).getAppHtml();' +
     '<\/script></body></html>';
+
   return HtmlService.createHtmlOutput(boot)
     .setTitle('出張距離測定・申請ガイド')
     .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
@@ -565,6 +579,33 @@ function clearAppHtmlCache() {
   for (var i = 0; i < n; i++) keys.push('app-html-v2:' + i);
   cache.removeAll(keys);
   return 'アプリHTMLのキャッシュを消去しました（次のアクセスで最新が読み込まれます）';
+}
+
+/**
+ * ルート検索・住所検索の中身。doGet（fetch経由）と apiCall（google.script.run経由）で共用する。
+ */
+function apiResult_(p) {
+  try {
+    // 住所・施設の検索（ジオコーディング）
+    if (p.mode === 'geocode' || p.q) return geocode_(p.q);
+
+    var origin = parseLatLng_(p.origin);
+    var dest   = parseLatLng_(p.dest);
+    if (!origin || !dest) {
+      throw new Error('origin / dest が不正です（"緯度,経度" 形式で指定してください）');
+    }
+
+    var routes = findRoutes_(origin, dest, {
+      avoidHighways: p.avoidHighways === '1',
+      avoidTolls:    p.avoidTolls === '1',
+      alternatives:  p.alternatives === '1',
+      waypoints:     parseWaypoints_(p.waypoints)
+    });
+
+    return { ok: true, routes: routes };
+  } catch (err) {
+    return { ok: false, error: String((err && err.message) || err) };
+  }
 }
 
 /**

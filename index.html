@@ -937,12 +937,8 @@ function formatAddress(item) {
 
 // Googleジオコーダ（GAS経由・APIキー不要）。住所精度が高い。施設名も今より当たりやすい。
 async function gasGeocode(query) {
-  if (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0) return [];
-  const url = GAS_API_URL + '?mode=geocode&q=' + encodeURIComponent(query) +
-    (window.__APP_TOKEN ? '&t=' + encodeURIComponent(window.__APP_TOKEN) : '');
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Google(GAS) HTTP ${res.status}`);
-  const data = await res.json();
+  if (!window.__GAS_MODE && (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0)) return [];
+  const data = await gasCall({ mode: 'geocode', q: query });
   if (!data.ok) throw new Error(data.error || 'Googleジオコーディング失敗');
   return (data.results || []).map(normGoogle);
 }
@@ -1939,6 +1935,28 @@ function routeKey(from, to, costing) {
   return `${from.lat.toFixed(6)},${from.lng.toFixed(6)};${to.lat.toFixed(6)},${to.lng.toFixed(6)};${costing}`;
 }
 
+// GAS への問い合わせ（ルート検索・住所検索の共通窓口）。
+// GASから配信されている場合は google.script.run を使う。
+// ブラウザから別ドメインへ直接通信するとログイン情報が送られず弾かれるため、
+// Apps Script 公式の通信方式を使うことで、ログインが必要な設定でも確実に通る。
+function gasCall(params) {
+  if (window.__GAS_MODE && window.google && google.script && google.script.run) {
+    return new Promise((resolve, reject) => {
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler(err => reject(new Error((err && err.message) || String(err))))
+        .apiCall(params);
+    });
+  }
+  // ローカルでHTMLを直接開いた場合は、従来どおりURLで問い合わせる
+  const qs = new URLSearchParams(params);
+  if (window.__APP_TOKEN) qs.set('t', window.__APP_TOKEN);
+  return fetch(GAS_API_URL + '?' + qs.toString()).then(res => {
+    if (!res.ok) throw new Error(`GAS HTTP ${res.status}`);
+    return res.json();
+  });
+}
+
 // Googleのエンコード済みポリライン（精度5）→ GeoJSON LineString（座標は[lng,lat]）
 function polylineToGeoJSON(encoded) {
   const latlngs = decodePolyline(encoded || '', 5);   // [[lat,lng],...]
@@ -1951,7 +1969,7 @@ function polylineToGeoJSON(encoded) {
 //   wantAlternatives: 代替ルートも取得するか
 // 返り値: variants 配列 [{ distance(m), duration(s), geometry, hasToll, method:'google' }]
 async function gasFetchRoutes(points, costing, wantAlternatives) {
-  if (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0) {
+  if (!window.__GAS_MODE && (!GAS_API_URL || GAS_API_URL.indexOf('http') !== 0)) {
     throw new Error('GAS_API_URL が未設定です（GASをデプロイしてURLを設定してください）');
   }
   const origin = points[0];
@@ -1959,25 +1977,18 @@ async function gasFetchRoutes(points, costing, wantAlternatives) {
   const vias = points.slice(1, -1);
   const noHw = costing === 'nohighway';
 
-  const params = new URLSearchParams({
+  const params = {
     origin: `${origin.lat},${origin.lng}`,
     dest: `${dest.lat},${dest.lng}`,
     avoidHighways: noHw ? '1' : '0',
     avoidTolls:    noHw ? '1' : '0',
-    alternatives:  wantAlternatives ? '1' : '0',
-    // 一般道（有料回避）モードでは常に有料なし。高速許可モードのときだけ有料判定を行う
-    detectToll:    noHw ? '0' : '1'
-  });
+    alternatives:  wantAlternatives ? '1' : '0'
+  };
   if (vias.length) {
-    params.set('waypoints', vias.map(v => `${v.lat},${v.lng}`).join('|'));
+    params.waypoints = vias.map(v => `${v.lat},${v.lng}`).join('|');
   }
-  // 利用制限がかかっている場合の合言葉（画面を開いたときにGASが埋め込む）
-  if (window.__APP_TOKEN) params.set('t', window.__APP_TOKEN);
 
-  // 単純GET（カスタムヘッダを付けず、CORSプリフライトを避ける）
-  const res = await fetch(GAS_API_URL + '?' + params.toString());
-  if (!res.ok) throw new Error(`GAS HTTP ${res.status}`);
-  const data = await res.json();
+  const data = await gasCall(params);
   if (!data.ok) {
     // 利用確認の期限切れ（12時間）などのときは、開き直せば直ることを伝える
     if (data.denied) showToast('利用の確認が切れました。ページを再読み込みしてください');
