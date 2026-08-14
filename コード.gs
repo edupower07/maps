@@ -120,16 +120,16 @@ function checkAccess_() {
     return { ok: false, email: '', reason: 'no-identity',
              message: 'Googleアカウントが確認できませんでした。学校のGoogleアカウントでログインした状態で開いてください。' };
   }
-  // ① 使えるドメインの限定（申請があってもドメイン外は許可しない）
+  // ① 管理者は、ドメインに関係なく常に利用できる
+  if (configList_(ADMIN_EMAILS, 'ADMIN_EMAILS').indexOf(email) !== -1) return { ok: true, email: email };
+
+  // ② 使えるドメインの限定（申請があってもドメイン外は許可しない）
   var domain = email.split('@')[1] || '';
   var restrict = configList_(RESTRICT_TO_DOMAINS, 'RESTRICT_TO_DOMAINS');
   if (restrict.length && restrict.indexOf(domain) === -1) {
     return { ok: false, email: email, reason: 'wrong-domain',
              message: 'このアプリは ' + restrict.join(' / ') + ' のアカウント専用です。学校のGoogleアカウントでログインし直してください。' };
   }
-
-  // ② 管理者
-  if (configList_(ADMIN_EMAILS, 'ADMIN_EMAILS').indexOf(email) !== -1) return { ok: true, email: email };
 
   // ③ 申請不要にしているドメイン（通常は空）
   if (configList_(AUTO_ALLOW_DOMAINS, 'AUTO_ALLOW_DOMAINS').indexOf(domain) !== -1) return { ok: true, email: email };
@@ -358,7 +358,11 @@ function denyPage_(gate) {
     extra = '<p style="font-size:13px;color:#666;">ブラウザで別のアカウントにログインしている場合は、学校のアカウントに切り替えてから開き直してください。</p>';
   } else if (gate.reason === 'no-identity') {
     body = 'Googleアカウントが確認できませんでした。';
-    extra = '<p style="font-size:13px;color:#666;">学校のGoogleアカウントでログインした状態で開き直してください。</p>';
+    extra = '<p style="font-size:13px;color:#666;">学校のGoogleアカウントでログインした状態で開き直してください。</p>' +
+      '<p style="font-size:11.5px;color:#999;margin-top:14px;border-top:1px solid #eee;padding-top:10px;">' +
+      '【管理者の方へ】この画面が全員に出る場合は、アプリの設定の問題です。' +
+      'デプロイの「アクセスできるユーザー」が<b>「全員（匿名ユーザーを含む）」</b>になっていると、' +
+      'アカウントを識別できません。<b>「Googleアカウントを持つ全員」</b>（または組織内の全員）に変更して再デプロイしてください。</p>';
   } else {
     body = 'このアプリは<b>利用申請をされた方のみ</b>ご利用いただけます。';
     extra = '<p style="font-size:13px;color:#666;">申請後、数分（最大5分ほど）してから開き直すと利用できるようになります。</p>';

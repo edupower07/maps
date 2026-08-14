@@ -53,7 +53,9 @@
 1. GitHubリポジトリを **Public** にする（GASがHTMLを読みに行くため）
 2. GAS プロジェクトに `コード.gs` を貼り付け、`APP_HTML_URL` が自分のリポジトリの raw URL になっているか確認
    （例：`https://raw.githubusercontent.com/edupower07/maps/main/index.html`）
-3. デプロイ（ウェブアプリ／実行=自分／アクセス=全員）。初回は UrlFetch の権限を許可
+3. デプロイ（ウェブアプリ／**実行=自分**／**アクセス=Googleアカウントを持つ全員**）。初回は UrlFetch の権限を許可
+   - ⚠ アクセスを「**全員（匿名ユーザーを含む）**」にすると利用者のアカウントを識別できず、
+     利用制限を有効にしたとき全員が拒否されます
 4. 発行された `.../exec` を開くと **アプリ画面が表示**される（GASが `index.html` を取得して配信）
 5. Googleサイトに、その exec URL を iframe で埋め込む：
    ```html
@@ -101,7 +103,7 @@ GASエディタで関数 **`setupApplicationForm`** を1回実行するだけで
 | 結果 | 意味 |
 |---|---|
 | `"email":"…@kita9.ed.jp", "allowed":true` | ✅ そのまま使えます |
-| `"email":"(取得できませんでした)"` | ❌ GASを `kita9.ed.jp` のアカウントで作り直すか、`ACCESS_CONTROL_ENABLED = false` に戻す |
+| `"email":"(取得できませんでした)"` | ❌ まずデプロイの「アクセスできるユーザー」を **Googleアカウントを持つ全員**（または組織内の全員）に変更して再デプロイ。それでも取得できない場合は、GASを `kita9.ed.jp` のアカウントで作り直す |
 
 ### 設定手順
 1. `コード.gs` を最新にする（`RESTRICT_TO_DOMAINS = ['kita9.ed.jp']` を確認）
