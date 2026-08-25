@@ -604,7 +604,15 @@ function apiResult_(p) {
 
     return { ok: true, routes: routes };
   } catch (err) {
-    return { ok: false, error: String((err && err.message) || err) };
+    var msg = String((err && err.message) || err);
+    // 1日の利用上限に達した場合（課金は一切発生せず、翌日には自動で戻る）。
+    // 距離が「推定値」にすり替わったまま申請されるのを防ぐため、明示して返す。
+    if (/too many times|Service invoked|上限|quota/i.test(msg)) {
+      return { ok: false, quotaExceeded: true,
+               error: '本日のGoogleマップ利用上限に達しました。日付が変わると自動的に戻ります。' +
+                      '（この状態では正確な距離が出せません。申請には使わないでください）' };
+    }
+    return { ok: false, error: msg };
   }
 }
 

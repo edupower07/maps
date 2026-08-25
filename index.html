@@ -1911,6 +1911,7 @@ function insertViaOrdered(vias, geometry, via) {
 }
 
 let gasAvailable = true;
+let quotaExceeded = false;   // その日のGoogleマップ利用上限に達したか
 
 // encoded polyline をデコード → [[lat,lng],...]（Google=精度5 / Valhalla=精度6）
 function decodePolyline(encoded, precision) {
@@ -1992,6 +1993,8 @@ async function gasFetchRoutes(points, costing, wantAlternatives) {
   if (!data.ok) {
     // 利用確認の期限切れ（12時間）などのときは、開き直せば直ることを伝える
     if (data.denied) showToast('利用の確認が切れました。ページを再読み込みしてください');
+    // 1日の利用上限。距離が推定値にすり替わるため、はっきり知らせる
+    if (data.quotaExceeded) { quotaExceeded = true; showToast('本日の利用上限に達しました'); }
     throw new Error(data.error || 'GASエラー');
   }
   if (!data.routes || !data.routes.length) throw new Error('GAS: ルートなし');
@@ -2749,9 +2752,17 @@ function renderResult() {
     </div>`;
 
   if (d.estimated) {
-    html += `<div style="margin-top:8px;padding:8px;background:#fff3e0;border-radius:6px;font-size:12px;color:#e65100;">
-      ⚠ ルート検索サーバーに接続できなかったため、直線距離×1.3の推定値です。高速道路あり/なしの区別もできません。正確な距離は地図ソフトで確認してください。
-    </div>`;
+    html += quotaExceeded
+      ? `<div style="margin-top:8px;padding:12px;background:#ffebee;border:2px solid #c62828;border-radius:8px;font-size:13px;color:#b71c1c;line-height:1.7;">
+          <b>⚠ 本日の利用上限に達しました。この距離は申請に使わないでください。</b><br>
+          いま表示されている距離は<b>直線距離からの概算</b>で、実際の道のりとは異なります。
+          日付が変わると自動的に元に戻りますので、明日あらためて計算してください。
+        </div>`
+      : `<div style="margin-top:8px;padding:12px;background:#fff3e0;border:2px solid #e65100;border-radius:8px;font-size:13px;color:#b71c1c;line-height:1.7;">
+          <b>⚠ この距離は申請に使わないでください。</b><br>
+          ルート検索に接続できなかったため、<b>直線距離×1.3の概算</b>を表示しています（実際の道のりとは異なります）。
+          通信環境を確認して、もう一度「距離を計算する」をお試しください。
+        </div>`;
   } else {
     const label = c.canCompare ? activeCand().label : 'このルート';
     const mark = c.decided ? '✅ 決定：' : '未決定：';
@@ -2843,6 +2854,15 @@ function buildSuggestion(c, d) {
 
 function printMap() {
   if (!lastCalc) { showToast('先に距離を計算してください'); return; }
+  // 概算（直線距離）のまま申請書類を作ってしまわないよう、はっきり確認する
+  if (activeData().estimated) {
+    const reason = quotaExceeded
+      ? '本日のGoogleマップ利用上限に達したため、'
+      : 'ルート検索に接続できなかったため、';
+    if (!confirm(reason + 'いま表示されている距離は直線距離からの概算です。\n' +
+                 '実際の道のりとは異なるため、出張申請には使えません。\n\n' +
+                 'それでも印刷しますか？')) return;
+  }
   if (!lastCalc.decided) {
     showToast('「このルートで決定して印刷へ」を押してから印刷してください');
     const el = document.getElementById('route-compare');
