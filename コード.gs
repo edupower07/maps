@@ -608,6 +608,57 @@ function apiResult_(p) {
   }
 }
 
+// ===== 使用量の記録（1日あたり何回Googleマップを呼んだか） =====
+// GASのMapsサービスには1日あたりの利用上限があるため、実際の消費量を
+// 記録しておき、showUsage() で確認できるようにする。
+
+function countMapsCall_(kind) {
+  var lock = LockService.getScriptLock();
+  try {
+    lock.waitLock(500);
+  } catch (e) { /* 混み合っているときは数えそこねてもよい（目安のため） */ }
+  try {
+    var props = PropertiesService.getScriptProperties();
+    var key = 'usage-' + Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    var cur = JSON.parse(props.getProperty(key) || '{}');
+    cur[kind] = (cur[kind] || 0) + 1;
+    cur.total = (cur.total || 0) + 1;
+    props.setProperty(key, JSON.stringify(cur));
+  } catch (e) {
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+/** 【管理者向け】直近の利用状況（1日あたりのGoogleマップ呼び出し回数）を確認する */
+function showUsage() {
+  var props = PropertiesService.getScriptProperties();
+  var all = props.getProperties();
+  var rows = [];
+  Object.keys(all).forEach(function (k) {
+    if (k.indexOf('usage-') !== 0) return;
+    var d = k.substring(6);
+    var v = {};
+    try { v = JSON.parse(all[k]); } catch (e) {}
+    rows.push({ date: d, total: v.total || 0, route: v.route || 0, geocode: v.geocode || 0 });
+  });
+  rows.sort(function (a, b) { return a.date < b.date ? 1 : -1; });
+
+  // 30日より古い記録は消しておく
+  rows.slice(30).forEach(function (r) { props.deleteProperty('usage-' + r.date); });
+
+  var lines = ['日付        合計   ルート検索  住所検索'];
+  rows.slice(0, 14).forEach(function (r) {
+    lines.push(r.date + '  ' + String(r.total).padStart(5) + String(r.route).padStart(11) + String(r.geocode).padStart(10));
+  });
+  var msg = rows.length
+    ? '■ 1日あたりのGoogleマップ呼び出し回数（直近14日）\n' + lines.join('\n') +
+      '\n\n※ 目安：1件の出張申請で 5〜6回（用務地1か所の場合）消費します。'
+    : 'まだ利用記録がありません。';
+  console.log(msg);
+  return msg;
+}
+
 /**
  * DirectionFinder で経路を検索し、共通形式の配列にして返す。
  */
@@ -628,6 +679,7 @@ function findRoutes_(origin, dest, opt) {
   if (opt.avoidTolls)    finder.setAvoid(Maps.DirectionFinder.Avoid.TOLLS);
   (opt.waypoints || []).forEach(function (w) { finder.addWaypoint(w.lat, w.lng); });
 
+  countMapsCall_('route');
   var res = finder.getDirections();
   if (!res || res.status !== 'OK' || !res.routes || !res.routes.length) {
     throw new Error('ルートが見つかりません（status=' + (res && res.status) + '）');
@@ -689,6 +741,7 @@ function geocode_(q) {
   if (!q) return { ok: false, error: 'q（検索語）を指定してください' };
 
   var geocoder = Maps.newGeocoder().setLanguage('ja').setRegion('jp');
+  countMapsCall_('geocode');
   var res = geocoder.geocode(q);
   if (!res || (res.status !== 'OK' && res.status !== 'ZERO_RESULTS')) {
     return { ok: false, error: 'ジオコーディング失敗（status=' + (res && res.status) + '）' };
