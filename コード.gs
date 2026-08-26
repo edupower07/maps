@@ -137,6 +137,13 @@ function checkAccess_() {
   // ④ 利用申請フォームの回答
   if (loadAllowlist_().indexOf(email) !== -1) return { ok: true, email: email };
 
+  // 許可リストの参照先が未設定だと、申請しても誰も通れない（設定ミス）。
+  // 「未登録」と区別して、管理者が気づけるようにする。
+  if (!allowlistSheetId_()) {
+    return { ok: false, email: email, reason: 'no-allowlist',
+             message: '利用者名簿が設定されていないため、現在ご利用いただけません。管理者にお知らせください。' };
+  }
+
   return { ok: false, email: email, reason: 'not-listed',
            message: 'このアカウントはまだ利用登録されていません。' };
 }
@@ -356,6 +363,13 @@ function denyPage_(gate) {
   if (gate.reason === 'wrong-domain') {
     body = 'ご利用には学校のGoogleアカウントが必要です。';
     extra = '<p style="font-size:13px;color:#666;">ブラウザで別のアカウントにログインしている場合は、学校のアカウントに切り替えてから開き直してください。</p>';
+  } else if (gate.reason === 'no-allowlist') {
+    body = '設定が完了していないため、現在ご利用いただけません。';
+    extra = '<p style="font-size:13px;color:#666;">お手数ですが、管理者にご連絡ください。</p>' +
+      '<p style="font-size:11.5px;color:#999;margin-top:14px;border-top:1px solid #eee;padding-top:10px;">' +
+      '【管理者の方へ】利用者名簿（申請フォームの回答シート）が設定されていません。' +
+      'この状態では申請済みの方も含め、全員が利用できません。GASエディタで ' +
+      '<b>setAllowlistSheet("スプレッドシートのURL")</b> を実行して設定してください。</p>';
   } else if (gate.reason === 'no-identity') {
     body = 'Googleアカウントが確認できませんでした。';
     extra = '<p style="font-size:13px;color:#666;">学校のGoogleアカウントでログインした状態で開き直してください。</p>' +
@@ -709,6 +723,41 @@ function logUsage(kind, stops) {
   } finally {
     try { lock.releaseLock(); } catch (e) {}
   }
+}
+
+/**
+ * 【設定用】利用者名簿（申請フォームの回答シート）を指定する。
+ * 例： setAllowlistSheet("https://docs.google.com/spreadsheets/d/xxxx/edit")
+ * ※ すでにフォームを手作りしている場合は、この関数で紐づけてください。
+ */
+function setAllowlistSheet(urlOrId) {
+  var s = String(urlOrId || '').trim();
+  var m = s.match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+  var id = m ? m[1] : s;
+  if (!id) return 'NG: スプレッドシートのURLまたはIDを渡してください。';
+  var name;
+  try { name = SpreadsheetApp.openById(id).getName(); }
+  catch (e) { return 'NG: そのスプレッドシートを開けません（URL/IDをご確認ください）: ' + e; }
+  PropertiesService.getScriptProperties().setProperty('ALLOWLIST_SHEET_ID', id);
+  clearAllowlistCache();
+  var msg = '✅ 利用者名簿を設定しました：' + name + '\n' +
+            '   ID：' + id + '\n' +
+            '   これで申請済みの方が利用できるようになります（反映は即時）。';
+  console.log(msg);
+  return msg;
+}
+
+/**
+ * 【設定用】管理者のメールアドレスを登録する（常に利用可・複数はカンマ区切り）。
+ * 例： setAdminEmails("t1650644@kita9.ed.jp")
+ */
+function setAdminEmails(emails) {
+  var v = String(emails || '').trim();
+  if (!v) return 'NG: メールアドレスを渡してください。';
+  PropertiesService.getScriptProperties().setProperty('ADMIN_EMAILS', v);
+  var msg = '✅ 管理者を登録しました：' + v;
+  console.log(msg);
+  return msg;
 }
 
 /**
