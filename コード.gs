@@ -692,20 +692,65 @@ function usageLogSheet_() {
  */
 function logUsage(kind, stops) {
   var gate = checkAccess_();
-  if (!gate.ok) return false;
+  if (!gate.ok) return 'NG: 利用が許可されていません（' + (gate.reason || '') + '）';
+  if (!allowlistSheetId_()) {
+    return 'NG: 記録先が未設定です（スクリプト プロパティ ALLOWLIST_SHEET_ID がありません）';
+  }
   var lock = LockService.getScriptLock();
-  try { lock.waitLock(3000); } catch (e) { return false; }
+  try { lock.waitLock(3000); } catch (e) { return 'NG: ほかの処理と競合しました'; }
   try {
     var sh = usageLogSheet_();
-    if (!sh) return false;
     sh.appendRow([new Date(), gate.email, String(kind || '不明'), stops == null ? '' : Number(stops)]);
-    return true;
+    return 'OK';
   } catch (e) {
-    console.warn('利用ログの記録に失敗: ' + e);
-    return false;
+    var msg = 'NG: ' + String((e && e.message) || e);
+    console.warn('利用ログの記録に失敗: ' + msg);
+    return msg;
   } finally {
     try { lock.releaseLock(); } catch (e) {}
   }
+}
+
+/**
+ * 【動作確認用】利用ログが正しく記録できるかを調べる。
+ * GASエディタで関数一覧から testUsageLog を選んで実行してください。
+ * どこでつまずいているかが結果に表示されます。
+ */
+function testUsageLog() {
+  var lines = [];
+  var email = currentUserEmail_();
+  lines.push('1. ログイン中のアカウント：' + (email || '(取得できませんでした)'));
+
+  var gate = checkAccess_();
+  lines.push('2. 利用の可否：' + (gate.ok ? 'OK' : 'NG（' + (gate.reason || '') + '）'));
+
+  var id = allowlistSheetId_();
+  lines.push('3. 記録先スプレッドシートID：' + (id || '(未設定)'));
+  if (!id) {
+    lines.push('');
+    lines.push('→ 記録先が未設定です。setupApplicationForm を実行するか、');
+    lines.push('   スクリプト プロパティに ALLOWLIST_SHEET_ID を登録してください。');
+    var msg0 = lines.join('\n'); console.log(msg0); return msg0;
+  }
+
+  try {
+    var ss = SpreadsheetApp.openById(id);
+    lines.push('4. スプレッドシート：' + ss.getName());
+    lines.push('   URL：' + ss.getUrl());
+  } catch (e) {
+    lines.push('4. スプレッドシートを開けません：' + e);
+    var msg1 = lines.join('\n'); console.log(msg1); return msg1;
+  }
+
+  var r = logUsage('動作確認', 0);
+  lines.push('5. テスト記録：' + r);
+  lines.push('');
+  lines.push(r === 'OK'
+    ? '→ 正常です。スプレッドシートの「利用ログ」タブを確認してください（この確認行は削除して構いません）。'
+    : '→ 上の理由で記録できていません。');
+  var msg = lines.join('\n');
+  console.log(msg);
+  return msg;
 }
 
 /**

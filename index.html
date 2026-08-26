@@ -1944,7 +1944,10 @@ function routeKey(from, to, costing) {
 function logUsage_(kind, stops) {
   try {
     if (window.__GAS_MODE && window.google && google.script && google.script.run) {
-      google.script.run.withFailureHandler(function () {}).logUsage(kind, stops);
+      google.script.run
+        .withSuccessHandler(function (r) { if (r && r !== 'OK') console.warn('[利用ログ]', r); })
+        .withFailureHandler(function (e) { console.warn('[利用ログ] 記録できませんでした:', (e && e.message) || e); })
+        .logUsage(kind, stops);
     }
   } catch (e) {}
 }
