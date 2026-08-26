@@ -76,6 +76,35 @@ var APP_HTML_URL = 'https://raw.githubusercontent.com/edupower07/maps/main/index
  * その場合は、学校ドメインのアカウントでGASプロジェクトを作り直してください。
  * 有効にする前に、必ず「?whoami=1」を職員のアカウントで開いて確認すること。
  */
+/* ============================================================
+ *  ★はじめの設定★（ここだけ書き換えて、関数「初期設定」を実行）
+ * ============================================================
+ * 1) 下の2行の '' の中に、それぞれ貼り付けます
+ *      SETUP_SHEET_URL   … 申請者一覧（フォームの回答）スプレッドシートのURL
+ *      SETUP_ADMIN_EMAIL … 管理者にする自分のメールアドレス（カンマ区切りで複数可）
+ * 2) 保存（Ctrl+S）
+ * 3) 画面上部の関数一覧から「初期設定」を選んで「実行」を押す
+ * ※ 設定内容はGAS側に保存されるので、次回このコードを貼り替えても消えません。
+ *   （設定が終わったら、下の2行は '' に戻して構いません）
+ */
+var SETUP_SHEET_URL   = '';
+var SETUP_ADMIN_EMAIL = '';
+
+function 初期設定() {
+  var out = [];
+  if (SETUP_ADMIN_EMAIL) out.push(setAdminEmails(SETUP_ADMIN_EMAIL));
+  else out.push('― 管理者は設定しませんでした（SETUP_ADMIN_EMAIL が空）');
+
+  if (SETUP_SHEET_URL) out.push(setAllowlistSheet(SETUP_SHEET_URL));
+  else out.push('― 利用者名簿は設定しませんでした（SETUP_SHEET_URL が空）');
+
+  out.push('');
+  out.push('この後、testUsageLog を実行して「利用の可否：OK」になれば完了です。');
+  var msg = out.join('\n');
+  console.log(msg);
+  return msg;
+}
+
 var ACCESS_CONTROL_ENABLED = true;    // false にすると誰でも使える（制限なし）
 
 // 管理者（常に利用可）。※このファイルはGitHubで公開されるため、
