@@ -1668,6 +1668,7 @@ function saveCommuteEdited() {
   document.getElementById('commute-choices').innerHTML = '';
   renderCommuteStatus();
   drawCommutePreview();
+  logUsage_('通勤ルート確定');
   showToast(`通勤ルートを確定しました（${savedCommute.distanceKm.toFixed(1)} km）`);
 }
 
@@ -1700,6 +1701,7 @@ function chooseCommute(i) {
   document.getElementById('commute-choices').innerHTML = '';
   renderCommuteStatus();
   drawCommutePreview();
+  logUsage_('通勤ルート確定');
   showToast(`通勤ルートを確定しました（${savedCommute.distanceKm.toFixed(1)} km）`);
 }
 
@@ -1934,6 +1936,17 @@ function decodePolyline(encoded, precision) {
 let routeCache = new Map();
 function routeKey(from, to, costing) {
   return `${from.lat.toFixed(6)},${from.lng.toFixed(6)};${to.lat.toFixed(6)},${to.lng.toFixed(6)};${costing}`;
+}
+
+// 利用状況の記録を送る（誰が何回使ったかの集計用）。
+// 結果を待たずに送るため、画面の動作が遅くなることはない。
+// 行き先の住所などは送らず、操作の種類と用務地の数だけを記録する。
+function logUsage_(kind, stops) {
+  try {
+    if (window.__GAS_MODE && window.google && google.script && google.script.run) {
+      google.script.run.withFailureHandler(function () {}).logUsage(kind, stops);
+    }
+  } catch (e) {}
 }
 
 // GAS への問い合わせ（ルート検索・住所検索の共通窓口）。
@@ -2412,6 +2425,7 @@ async function calculateRoute() {
     renderCandidates();
     applyCandidate(0);
 
+    logUsage_('距離計算', destStops.length);
     showToast('距離計算が完了しました');
 
     // 結果までスクロールして次にやることを見せる

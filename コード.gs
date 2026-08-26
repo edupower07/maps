@@ -667,6 +667,87 @@ function showUsage() {
   return msg;
 }
 
+// ===== アカウント別の利用ログ =====
+// 「誰が・いつ・何をしたか（回数）」を申請者名簿と同じスプレッドシートに記録する。
+// ※ 用務地や住所などの行き先情報は記録しない（利用状況の把握に不要なため）。
+
+var USAGE_LOG_SHEET_NAME = '利用ログ';
+
+function usageLogSheet_() {
+  var id = allowlistSheetId_();
+  if (!id) return null;
+  var ss = SpreadsheetApp.openById(id);
+  var sh = ss.getSheetByName(USAGE_LOG_SHEET_NAME);
+  if (!sh) {
+    sh = ss.insertSheet(USAGE_LOG_SHEET_NAME);
+    sh.appendRow(['日時', 'メールアドレス', '操作', '用務地の数']);
+    sh.setFrozenRows(1);
+  }
+  return sh;
+}
+
+/**
+ * 【画面側から呼ばれる】利用を1件記録する。
+ * kind … '距離計算' / '通勤ルート確定' など。stops … 用務地の数（任意）
+ */
+function logUsage(kind, stops) {
+  var gate = checkAccess_();
+  if (!gate.ok) return false;
+  var lock = LockService.getScriptLock();
+  try { lock.waitLock(3000); } catch (e) { return false; }
+  try {
+    var sh = usageLogSheet_();
+    if (!sh) return false;
+    sh.appendRow([new Date(), gate.email, String(kind || '不明'), stops == null ? '' : Number(stops)]);
+    return true;
+  } catch (e) {
+    console.warn('利用ログの記録に失敗: ' + e);
+    return false;
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
+}
+
+/**
+ * 【管理者向け】アカウント別の利用状況を集計する。
+ * days … 集計する日数（既定30日）
+ */
+function showUserUsage(days) {
+  days = days || 30;
+  var sh = usageLogSheet_();
+  if (!sh) return '利用ログがありません（先に setupApplicationForm を実行してください）。';
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) return 'まだ利用記録がありません。';
+
+  var since = new Date().getTime() - days * 24 * 60 * 60 * 1000;
+  var byUser = {}, byKind = {}, total = 0;
+  for (var r = 1; r < values.length; r++) {
+    var t = values[r][0];
+    var time = (t instanceof Date) ? t.getTime() : new Date(t).getTime();
+    if (!time || time < since) continue;
+    var mail = String(values[r][1] || '(不明)');
+    var kind = String(values[r][2] || '不明');
+    byUser[mail] = (byUser[mail] || 0) + 1;
+    byKind[kind] = (byKind[kind] || 0) + 1;
+    total++;
+  }
+
+  var users = Object.keys(byUser).sort(function (a, b) { return byUser[b] - byUser[a]; });
+  var lines = [];
+  lines.push('■ 直近' + days + '日の利用状況');
+  lines.push('利用した人数：' + users.length + '人 ／ 合計 ' + total + ' 回');
+  lines.push('');
+  Object.keys(byKind).forEach(function (k) { lines.push('  ' + k + '：' + byKind[k] + ' 回'); });
+  lines.push('');
+  lines.push('■ アカウント別（多い順）');
+  users.forEach(function (m, i) {
+    lines.push(String(i + 1).padStart(3) + '. ' + m + '  ' + byUser[m] + ' 回');
+  });
+  var msg = lines.join('\n');
+  console.log(msg);
+  return msg;
+}
+
 /**
  * DirectionFinder で経路を検索し、共通形式の配列にして返す。
  */
