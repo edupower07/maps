@@ -46,6 +46,11 @@
 // ※ この方式は GitHubリポジトリが Public である必要があります。
 var APP_HTML_URL = 'https://raw.githubusercontent.com/edupower07/maps/main/index.html';
 
+// このコードの版。アプリの画面に渡し、ブラウザの開発者ツールで
+// 「どのデプロイ版と通信しているか」を確認できるようにする。
+// （デプロイし忘れの発見用。コードを更新したらここも更新する）
+var CODE_VERSION = '2026-09-02';
+
 /* ============================================================
  *  利用制限（アクセス制御）の設定
  * ============================================================
@@ -543,6 +548,7 @@ function bootstrapPage_(token) {
     'window.__APP_TOKEN=' + JSON.stringify(token || '') + ';' +
     'window.__GAS_URL=' + JSON.stringify(self) + ';' +
     'window.__GAS_MODE=true;' +
+    'window.__SERVER_VERSION=' + JSON.stringify(CODE_VERSION) + ';' +
     'function bootFail(e){var m=document.getElementById("boot-msg");' +
     'if(m)m.innerHTML="<b>読み込みに失敗しました</b><br>"+((e&&e.message)||e)+' +
     '"<br><br>ページを再読み込みしてもうまくいかない場合は、学校のGoogleアカウントでログインしているかご確認ください。";}' +

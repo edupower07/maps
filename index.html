@@ -810,6 +810,10 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 // 画面サイズが変わったとき（スマホの回転・ウィンドウ変更）に地図を描き直す
 window.addEventListener('resize', () => setTimeout(() => map.invalidateSize(), 200));
 
+// どのバージョンのGAS（デプロイ済みコード）と通信しているかを表示する。
+// 「(不明)」と出る場合は、GASの再デプロイ（新バージョン）がされていない。
+console.log('[サーバー版]', window.__SERVER_VERSION || '(不明：GASの再デプロイが必要かもしれません)');
+
 loadSavedLocations();
 renderSavedDests();
 renderDestStops();
@@ -1949,7 +1953,11 @@ function logUsage_(kind, stops) {
         .withFailureHandler(function (e) { console.warn('[利用ログ] 記録できませんでした:', (e && e.message) || e); })
         .logUsage(kind, stops);
     }
-  } catch (e) {}
+  } catch (e) {
+    // ここに来るのは、デプロイ済みのGASに logUsage が無い場合など。
+    // 黙って無視すると原因が分からなくなるため、必ず理由を出す。
+    console.warn('[利用ログ] 送信できませんでした（GASの再デプロイが必要かもしれません）:', e);
+  }
 }
 
 // GAS への問い合わせ（ルート検索・住所検索の共通窓口）。
