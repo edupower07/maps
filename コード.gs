@@ -822,10 +822,32 @@ function testUsageLog() {
 
   var r = logUsage('動作確認', 0);
   lines.push('5. テスト記録：' + r);
+
+  // 配信中のアプリ画面に「記録を送る機能」が含まれているかを確認する。
+  // GASは取得したHTMLを10分間キャッシュするため、古い画面が配信され続けると
+  // サーバー側が正常でも記録が増えない。
+  var htmlOk = null;
+  try {
+    var html = fetchAppHtml_();
+    htmlOk = html.indexOf('logUsage_') !== -1;
+    lines.push('6. 配信中のアプリ画面：' + (htmlOk
+      ? '最新（記録を送る機能あり）'
+      : '古い可能性あり（記録を送る機能が見つかりません）'));
+  } catch (e) {
+    lines.push('6. 配信中のアプリ画面：確認できません（' + e + '）');
+  }
+
   lines.push('');
-  lines.push(r === 'OK'
-    ? '→ 正常です。スプレッドシートの「利用ログ」タブを確認してください（この確認行は削除して構いません）。'
-    : '→ 上の理由で記録できていません。');
+  if (r !== 'OK') {
+    lines.push('→ 上の理由で記録できていません。');
+  } else if (htmlOk === false) {
+    lines.push('→ サーバー側は正常ですが、配信中の画面が古いため記録が送られていません。');
+    lines.push('   clearAppHtmlCache を実行し、アプリを再読み込み（Ctrl+Shift+R）してください。');
+  } else {
+    lines.push('→ 設定は正常です。アプリで「距離を計算する」を実行すると1行増えます。');
+    lines.push('   それでも増えない場合は、ウェブアプリの再デプロイ（新バージョン）が必要です。');
+    lines.push('   ※ エディタでの実行は保存済みコード、アプリはデプロイ済みコードで動くためです。');
+  }
   var msg = lines.join('\n');
   console.log(msg);
   return msg;
