@@ -460,6 +460,8 @@ function doGet(e) {
     var w = checkAccess_();
     return json_({
       ok: true,
+      codeVersion: CODE_VERSION,   // デプロイ済みコードの版（デプロイ確認用）
+      hasLogUsage: (typeof logUsage === 'function'),
       email: currentUserEmail_() || '(取得できませんでした)',
       allowed: w.ok,
       reason: w.reason || null,
