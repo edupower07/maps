@@ -814,6 +814,19 @@ window.addEventListener('resize', () => setTimeout(() => map.invalidateSize(), 2
 // 「(不明)」と出る場合は、GASの再デプロイ（新バージョン）がされていない。
 console.log('[サーバー版]', window.__SERVER_VERSION || '(不明：GASの再デプロイが必要かもしれません)');
 
+// デプロイ済みコードで呼び出せる関数の一覧。
+// google.script.run はデプロイ済みコードの関数から作られるため、
+// ここに logUsage が無ければ「保存はしたがデプロイされていない」と分かる。
+try {
+  if (window.google && google.script && google.script.run) {
+    const fns = Object.keys(google.script.run).filter(k => k.indexOf('with') !== 0).sort();
+    console.log('[サーバー機能]', fns.length ? fns.join(', ') : '(取得できません)');
+    if (fns.length && fns.indexOf('logUsage') === -1) {
+      console.warn('[サーバー機能] logUsage がありません → GASを保存してから「新バージョン」で再デプロイしてください');
+    }
+  }
+} catch (e) { console.warn('[サーバー機能] 一覧を取得できません:', e); }
+
 loadSavedLocations();
 renderSavedDests();
 renderDestStops();
